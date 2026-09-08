@@ -1,0 +1,22 @@
+{
+  "name": "Customer Insights Job - Failing Version",
+  "tasks": [
+    {
+      "task_key": "customer_insights_task",
+      "notebook_task": {
+        "notebook_path": "/Users/keqingli1129@gmail.com/customer_insights_failing",
+        "source": "WORKSPACE"
+      },
+      "timeout_seconds": 3600
+    }
+  ],
+  "schedule": {
+    "quartz_cron_expression": "0 0 9 * * ?",
+    "timezone_id": "America/Los_Angeles",
+    "pause_status": "PAUSED"
+  },
+  "max_concurrent_runs": 1,
+  "email_notifications": {
+    "on_failure": ["keqingli1129@gmail.com"]
+  }
+}

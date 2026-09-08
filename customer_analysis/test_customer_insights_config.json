@@ -1,0 +1,13 @@
+{
+  "run_name": "Customer Insights Test",
+  "tasks": [
+    {
+      "task_key": "test_customer_insights",
+      "notebook_task": {
+        "notebook_path": "/Users/keqingli1129@gmail.com/customer_insights",
+        "source": "WORKSPACE"
+      },
+      "timeout_seconds": 600
+    }
+  ]
+}
