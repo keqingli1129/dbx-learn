@@ -9,6 +9,7 @@
 # Import libraries
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, sum, count, avg
+from databricks.sdk.runtime import spark, display  # noqa: F401
 
 # COMMAND ----------
 
