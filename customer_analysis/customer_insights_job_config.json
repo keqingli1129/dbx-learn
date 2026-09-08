@@ -4,7 +4,7 @@
     {
       "task_key": "customer_insights_task",
       "notebook_task": {
-        "notebook_path": "/Users/keqingli1129@gmail.com/customer_insights",
+        "notebook_path": "/Workspace/Users/keqingli1129@gmail.com/dbx-learn/customer_insights",
         "source": "WORKSPACE"
       },
       "timeout_seconds": 3600
