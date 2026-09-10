@@ -1,0 +1,385 @@
+---
+description: "Task list for Smart Claims — End-to-End Insurance Lakehouse"
+---
+
+# Tasks: Smart Claims — End-to-End Insurance Lakehouse
+
+**Input**: Design documents from `docs/001-smart-claims/`
+
+**Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md),
+[data-model.md](./data-model.md), [contracts/](./contracts/)
+
+**Tests**: REQUIRED. Declared at specification time (spec.md FR-044, checklist notes). Test files
+are part of the deliverable and are committed alongside implementation code, not discarded once
+green.
+
+**Organization**: grouped by user story. Each phase is an independently demonstrable increment.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: parallelizable — different files, no dependency on an incomplete task
+- **[Story]**: `[US1]`…`[US7]`, mapping to spec.md user stories
+- Every task names its exact file path
+
+## Conventions
+
+- Profile is always `DEFAULT`, passed explicitly as `--profile DEFAULT`. Never rely on the default.
+- Pipeline code uses the **modern** API: `from pyspark import pipelines as dp`. `import dlt`,
+  `@dlt.*`, `LIVE.`, `APPLY CHANGES` and `dlt.apply_changes` are all forbidden — `LIVE.` errors
+  outright on current runtimes (research R5).
+- Cleaning and decision logic lives in `src/smart_claims/lib/` as pure Python and is *imported*
+  by pipeline code. Logic written inline inside a `@dp.table` body is a defect — it cannot be
+  tested offline (research R10, plan Structure Decision).
+- Catalog is `smart_claims_dev` throughout; never hardcode it in transformation code, read it
+  from pipeline configuration.
+
+---
+
+## Phase 1: Setup (Shared Infrastructure)
+
+**Purpose**: bundle skeleton and test harness. No business logic.
+
+- [ ] T001 Create the bundle root `databricks.yml` with bundle name `smart_claims`, a single `dev` target bound to workspace host `https://dbc-b5c9918e-c2d2.cloud.databricks.com`, `mode: development`, and variables for `catalog` (default `smart_claims_dev`), `speed_threshold` (default `45`), and `warehouse_id` (default `cdcb7003ae7dd5ab`, the existing Serverless Starter Warehouse)
+- [ ] T002 Create the Python package skeleton — `src/smart_claims/__init__.py` plus empty `lib/`, `setup/`, `ingest/`, `transform/`, `ml/`, `genie/`, `app/` subpackages each with `__init__.py`
+- [ ] T003 Add project dependencies to `pyproject.toml`: runtime `fastapi`, `uvicorn`, `python-multipart`, `databricks-sdk`; dev group `pytest`, `pytest-mock`. Keep the existing `databricks-connect~=18.0.0` dev dependency — do NOT add `pyspark`, it conflicts with databricks-connect (research R10)
+- [ ] T004 [P] Configure pytest in `pyproject.toml`: `testpaths = ["tests"]`, and register the marker `workspace` for tests requiring a live profile, with `addopts = "-m 'not workspace'"` so `pytest` runs offline by default
+- [ ] T005 [P] Create `tests/__init__.py`, `tests/unit/__init__.py`, `tests/integration/__init__.py`, and `tests/conftest.py` defining a `--profile` option that skips `workspace`-marked tests when absent
+
+**Checkpoint**: `databricks bundle validate -t dev --profile DEFAULT` is clean and `uv run pytest` exits successfully with zero tests collected.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: the pure-Python library every later phase imports, and the catalog every later phase writes to.
+
+**⚠️ CRITICAL**: no user story work can begin until this phase is complete.
+
+### Tests (write first, watch them fail)
+
+- [ ] T006 [P] Write `tests/unit/test_severity.py` asserting the severity domain is exactly `Trivial Damage`, `Minor Damage`, `Major Damage`, `Total Loss`; that the classifier's 3-class output maps onto it deterministically; that comparison is case- and whitespace-insensitive; and that an unknown label raises rather than silently returning a default
+- [ ] T007 [P] Write `tests/unit/test_payload.py` asserting base64-encoded JSON decodes to a dict with keys `chassis_no`, `speed`, `latitude`, `longitude`, `event_timestamp`; that malformed base64 and malformed JSON each return a sentinel rather than raising (a single bad payload must not fail ingestion — spec edge case); and that all values arrive as strings
+- [ ] T008 [P] Write `tests/unit/test_cleaning.py` covering: `"Ada Lovelace"` → `("Ada", "Lovelace")`; single-token and triple-token names; empty and null names; address whitespace and casing normalisation; and date coercion for all four formats present in the data (`MM/dd/yyyy`, `yyyy-MM-dd`, `dd-MM-yyyy`, `dd/MM/yyyy`) plus `yyyy-MM-dd HH:mm:ss`, with unparseable input returning `None` not raising
+- [ ] T009 [P] Write `tests/unit/test_decision.py` covering the three-valued fold from contracts/rules-engine.md: all `pass` → `release_funds`; any `fail` → `requires_investigation`; **any `indeterminate` → `requires_investigation`**; empty rule set; and that `indeterminate` is never collapsed to `pass` or `fail`
+
+### Implementation
+
+- [ ] T010 [P] Implement `src/smart_claims/lib/severity.py` — the single `SEVERITY_DOMAIN` tuple, `normalize(label)`, and `MODEL_LABEL_MAP` mapping classifier classes onto the domain. No Spark import
+- [ ] T011 [P] Implement `src/smart_claims/lib/payload.py` — `decode_telematics(data_b64) -> dict | None`. No Spark import
+- [ ] T012 [P] Implement `src/smart_claims/lib/cleaning.py` — `split_name`, `normalize_address`, `parse_date(value, fmt)`. No Spark import
+- [ ] T013 [P] Implement `src/smart_claims/lib/decision.py` — `CheckResult` (`pass`/`fail`/`indeterminate`) and `overall_outcome(results) -> str`. No Spark import
+- [ ] T014 Create `resources/catalog.yml` declaring catalog `smart_claims_dev` and schemas `source`, `landing`, `bronze`, `silver`, `gold`, plus managed volumes `landing.telematics_raw`, `landing.claims`, `landing.training_images` (depends on T001)
+- [ ] T015 Create `src/smart_claims/lib/config.py` reading `catalog`, `speed_threshold` and volume roots from pipeline/job configuration with no hardcoded catalog name
+- [ ] T016 Deploy and verify: `databricks bundle deploy -t dev --profile DEFAULT`, then confirm all five schemas exist via `databricks schemas list smart_claims_dev --profile DEFAULT`
+
+**Checkpoint**: `uv run pytest tests/unit` passes (T006–T009 now green); catalog and schemas exist in the workspace.
+
+---
+
+## Phase 3: User Story 1 - Governed Data Foundation (Priority: P1) 🎯 MVP
+
+**Goal**: seeded operational source data and labelled training images, ready for every downstream story.
+
+**Independent Test**: run the setup job; four schemas populated, source tables referentially consistent, training-image volume holding ≥3 labels with ≥20 images each.
+
+- [ ] T017 [US1] Implement `src/smart_claims/setup/seed_source_data.py` generating ~1000 customers, ~1200 policies, ~1300 claims per the schemas in data-model.md, writing to `source.customer`, `source.policy`, `source.claim` with `delta.enableChangeDataFeed = true` AND `delta.enableRowTracking = true` on all three (row tracking is required for gold MVs to refresh incrementally rather than silently full-recompute — research R6, FR-023)
+- [ ] T018 [US1] Extend `seed_source_data.py` to inject the **deliberate defects** the later phases prove they catch: some `claim.claim_no` NULL; some `claim.incident_hour` outside 0–23; some `policy.premium` negative; `customer.name` always a combined `"First Last"`; `customer.address` with inconsistent whitespace and casing. Dates written as text in four distinct formats — `claim_date` as `yyyy-MM-dd HH:mm:ss`, `incident_date` as `MM/dd/yyyy`, `driver_license_issue_date` as `dd/MM/yyyy`, `policy.pol_issue_date` as `dd-MM-yyyy`, `pol_eff_date`/`pol_expiry_date` as `yyyy-MM-dd`
+- [ ] T019 [US1] Ensure referential consistency in `seed_source_data.py`: every `claim.policy_no` resolves to a policy and every `policy.customer_id` to a customer, EXCEPT a small deliberate set of orphan claims to exercise the missing-policy edge case. Assign `policy.chassis_no` values that the telematics producer will later emit for
+- [ ] T020 [US1] Implement `src/smart_claims/setup/fetch_training_images.py` with an **explicit egress check first** (FR-004) — attempt an HTTPS request and fail with an actionable message naming the fallback if it fails. Egress was confirmed working during planning (research R1), so a failure here is a change in conditions, not a design error
+- [ ] T021 [US1] Extend `fetch_training_images.py` to download a public labelled car-damage-severity dataset and write images into `/Volumes/smart_claims_dev/landing/training_images/<severity_label>/<file>.jpg` so the label is recoverable from the path, normalising each label through `lib.severity.normalize`
+- [ ] T022 [US1] Implement `src/smart_claims/setup/seed_claim_images.py` populating `/Volumes/smart_claims_dev/landing/claims/images/` with accident photos, `/Volumes/smart_claims_dev/landing/claims/metadata/` with the `image_id,claim_no,image_path,uploaded_at` CSV linking images to seeded claims, and an empty `/Volumes/smart_claims_dev/landing/claims/archive/` directory
+- [ ] T023 [US1] Create `resources/setup.job.yml` declaring a serverless job with tasks `seed_source_data` → `fetch_training_images` → `seed_claim_images`, with an environment declaring the `faker` dependency (absent from the base image — research R1)
+- [ ] T024 [US1] Deploy and run: `databricks bundle deploy -t dev --profile DEFAULT && databricks bundle run setup_job -t dev --profile DEFAULT`. Verify SC-001 — query row counts on all three source tables and list the training-image volume to confirm ≥3 labels with ≥20 images each
+
+**Checkpoint**: US1 complete. Source data and images exist; nothing downstream built yet.
+
+---
+
+## Phase 4: User Story 2 - Telematics Event Ingestion (Priority: P2)
+
+**Goal**: telematics events decoded from encoded payloads into typed bronze columns, incrementally.
+
+**Independent Test**: emit a known batch, ingest, confirm exact typed rows; emit more, re-ingest, confirm only new rows added.
+
+- [ ] T025 [US2] Implement `src/smart_claims/setup/telematics_producer.py` writing newline-delimited JSON files into `/Volumes/smart_claims_dev/landing/telematics_raw/`, each line `{"partition_key","sequence_number","approximate_arrival_timestamp","data"}` where `data` is base64 of `{"chassis_no","speed","latitude","longitude","event_timestamp"}` with **all values as strings** (data-model.md). Emit for the `chassis_no` values seeded in T019, including at least one vehicle with speeds above the 45 threshold and at least one policy's vehicle with **no** readings at all, to exercise the indeterminate speed check
+- [ ] T026 [US2] Create `resources/telematics_producer.job.yml` declaring a serverless job wrapping T025, parameterised by record count and batch count
+- [ ] T027 [US2] Implement `src/smart_claims/ingest/telematics.py` — a streaming table `bronze.telematics` reading with Auto Loader (`cloudFiles`, format `json`) from the landing volume, then decoding: base64 → `cast(string)` → `from_json` against an all-string map schema → projection into `stream_metadata STRUCT<partition_key, sequence_number, arrival_ts>` plus typed `chassis_no`, `speed`, `latitude`, `longitude`, `event_timestamp`, plus `_ingested_at`. Decoding calls `lib.payload` via a UDF — do not reimplement the decode inline
+- [ ] T028 [US2] Create `resources/ingest.pipeline.yml` declaring the ingest pipeline with default catalog `smart_claims_dev`, default schema `bronze`, serverless, `continuous: false`, and configuration keys `catalog`, `landing_volume_root`, `schema_evolution_mode`, `clean_source_retention`, `archive_path` (contracts/pipeline-datasets.md). Do NOT hardcode these in pipeline code
+- [ ] T029 [US2] Deploy, run the producer, then run the ingest pipeline. Verify typed columns are populated and NOT base64 text
+- [ ] T030 [US2] Verify incrementality (SC-003): record the row count, re-run ingest with no new files, confirm the count is unchanged; then run the producer again, re-run ingest, confirm only the new events were added
+- [ ] T031 [US2] Verify continuous mode (US2 scenario 3): flip `continuous: true`, redeploy, start the pipeline, run the producer while it runs, confirm rows appear without re-triggering. **Stop the pipeline afterwards** — a continuous pipeline consumes serverless quota indefinitely
+- [ ] T032 [US2] Restore `continuous: false` and redeploy, leaving triggered mode as the committed default
+- [ ] T033 [P] [US2] Write `tests/integration/test_telematics_ingestion.py` (marked `workspace`) asserting decoded column types and that no row retains an un-decoded payload
+
+**Checkpoint**: US2 complete. Telematics flows into bronze in both modes.
+
+---
+
+## Phase 5: User Story 3 - Operational Database Change Capture (Priority: P3)
+
+**Goal**: inserts, updates and deletes at the source converge into bronze.
+
+**Independent Test**: one insert, one update, one delete at source; after one ingest run each is correctly reflected.
+
+- [ ] T034 [US3] Implement `src/smart_claims/ingest/cdc.py` creating explicit streaming tables `bronze.customer`, `bronze.policy`, `bronze.claim` via `dp.create_streaming_table`, each fed by `dp.create_auto_cdc_flow` reading the corresponding source table's change feed as a stream (`spark.readStream.option("readChangeFeed","true").table(...)`)
+- [ ] T035 [US3] Configure each Auto CDC flow in `cdc.py`: `keys` on the natural key (`customer_id`, `policy_no`, `claim_no`), `sequence_by="_commit_version"`, `apply_as_deletes=expr("_change_type = 'delete'")`, `stored_as_scd_type="1"`, and `except_column_list` excluding the change-feed metadata columns. Use `dp.create_auto_cdc_flow` — NOT the legacy `apply_changes`
+- [ ] T036 [US3] Add the CDC source datasets to `resources/ingest.pipeline.yml` so `src/smart_claims/ingest/cdc.py` is included in the same pipeline (contracts/pipeline-datasets.md — the ingest pipeline owns all bronze tables)
+- [ ] T037 [US3] Implement `src/smart_claims/setup/cdc_mutations.py` performing exactly one INSERT into `source.policy`, one UPDATE of a `source.claim` row's `incident_severity`, and one DELETE from `source.customer` — printing the affected keys so the verification queries are reproducible
+- [ ] T038 [US3] Extend `cdc_mutations.py` with the three verification queries from quickstart.md §3, run **before and after** ingestion, printing both results so the propagation is visible rather than asserted
+- [ ] T039 [US3] Create `resources/cdc_mutation.job.yml` declaring a serverless job wrapping T037–T038
+- [ ] T040 [US3] Deploy and run the initial CDC ingestion; verify bronze customer/policy/claim row counts match their source tables
+- [ ] T041 [US3] Run the mutation job, re-run ingest, and verify SC-002: the inserted policy present; the updated claim showing the **new** severity and appearing **exactly once** (a duplicate row with the old value means the key or sequence column is wrong); the deleted customer returning zero rows
+- [ ] T042 [P] [US3] Write `tests/integration/test_cdc_propagation.py` (marked `workspace`) asserting all three propagations, including explicitly that the updated row count is 1, not 2
+
+**Checkpoint**: US3 complete. Bronze converges on source state.
+
+---
+
+## Phase 6: User Story 4 - Accident Image and Metadata Ingestion (Priority: P4)
+
+**Goal**: images and metadata ingested incrementally, with schema drift handled both ways and processed files archived.
+
+**Independent Test**: ingest, add a drifted file under each mode, confirm the configured behaviour; confirm processed images relocate to archive.
+
+- [ ] T043 [US4] Implement `bronze.training_images` in `src/smart_claims/ingest/objectstore.py` — Auto Loader with `cloudFiles.format = binaryFile` over `/Volumes/smart_claims_dev/landing/training_images/`, retaining `path`, `modificationTime`, `length`, `content`, plus `label` derived from the path via `_metadata.file_path` (NOT the deprecated `input_file_name()`) and normalised through `lib.severity`
+- [ ] T044 [US4] Implement `bronze.claim_images_meta` in `objectstore.py` — Auto Loader with `cloudFiles.format = csv` over the metadata folder, with `cloudFiles.schemaEvolutionMode` read from the pipeline's `schema_evolution_mode` configuration key so both modes are selectable without a code change, and a `_rescued_data` column
+- [ ] T045 [US4] Implement `bronze.claim_images` in `objectstore.py` — Auto Loader with `binaryFile`, plus `cloudFiles.cleanSource = MOVE`, `cloudFiles.cleanSource.retentionDuration` from the `clean_source_retention` config key, and `cloudFiles.cleanSource.moveDestination` set to the `archive_path` config key
+- [ ] T046 [US4] Deploy and run ingest; verify `bronze.training_images` holds ≥3 distinct labels with ≥20 images each, and that `bronze.claim_images_meta` and `bronze.claim_images` are populated
+- [ ] T047 [US4] Verify drift mode `addNewColumns` (SC-004 part 1): with the config set to `addNewColumns`, upload a metadata CSV carrying one extra column to the landing volume, re-run ingest, and confirm the new column exists on the table, NULL for all prior rows and populated for the new one
+- [ ] T048 [US4] Verify drift mode `rescue` (SC-004 part 2): set the config to `rescue`, redeploy, upload a metadata CSV carrying a *further* new column, re-run ingest, and confirm the table's columns are **unchanged** and the new field's value appears inside `_rescued_data`
+- [ ] T049 [US4] Verify archiving (SC-005): after `clean_source_retention` elapses, re-run ingest and list `dbfs:/Volumes/smart_claims_dev/landing/claims/archive` — processed files present there and absent from `images/`. If nothing moved, the retention window has not elapsed; re-run rather than treating it as a failure (spec edge case)
+- [ ] T050 [US4] **Risk contingency**: if `cleanSource` proves unsupported on managed volumes, replace it with an explicit post-ingest file-move task in `objectstore.py`, and record the substitution in `research.md` under a new decision heading. Do not silently drop the archiving requirement
+- [ ] T051 [P] [US4] Write `tests/integration/test_schema_drift.py` (marked `workspace`) asserting the two drift modes produce their distinct documented outcomes
+- [ ] T052 [US4] Set the committed default for `schema_evolution_mode` back to `rescue` and redeploy — quarantining drift is the safer production default
+
+**Checkpoint**: US4 complete. All three file-ingestion behaviours demonstrated.
+
+---
+
+## Phase 7: User Story 5 - Cleansing, Business Views and Scheduled Orchestration (Priority: P5)
+
+**Goal**: quality-enforced silver, joined gold views, and an hourly orchestrated graph.
+
+**Independent Test**: injected invalid records excluded from silver and reported; gold joins neither lose nor duplicate claims; scheduled job runs in dependency order.
+
+- [ ] T053 [US5] Implement `silver.claim` in `src/smart_claims/transform/bronze_to_silver.py` with `@dp.expect_all_or_drop` carrying exactly two constraints — `valid_claim_number: claim_no IS NOT NULL` and `valid_incident_hour: incident_hour BETWEEN 0 AND 23` — coercing all four date columns using their respective formats via `lib.cleaning.parse_date`, and dropping `_rescued_data`
+- [ ] T054 [P] [US5] Implement `silver.policy` in `bronze_to_silver.py` with `expect_all_or_drop` on `valid_policy_number: policy_no IS NOT NULL`, `premium → abs(premium)` (FR-019), and the three date columns coerced with their distinct formats
+- [ ] T055 [P] [US5] Implement `silver.customer` in `bronze_to_silver.py` with `expect_all_or_drop` on `valid_customer_id: customer_id IS NOT NULL`, `name` split into `first_name`/`last_name` via `lib.cleaning.split_name`, `address` normalised via `lib.cleaning.normalize_address`, and `date_of_birth` coerced
+- [ ] T056 [P] [US5] Implement `silver.telematics` in `bronze_to_silver.py` with `expect_all_or_drop` on `chassis_no IS NOT NULL` and `speed >= 0`, casting speed/latitude/longitude to DOUBLE and `event_timestamp` to TIMESTAMP
+- [ ] T057 [P] [US5] Implement `silver.training_images` and `silver.claim_images` in `bronze_to_silver.py`; `silver.claim_images` joins `bronze.claim_images` to `bronze.claim_images_meta` to attach `claim_no`, with `expect_all_or_drop` on `claim_no IS NOT NULL`
+- [ ] T058 [US5] Implement `gold.telematics_agg` in `src/smart_claims/transform/silver_to_gold.py` as a **Materialized View** (`@dp.materialized_view`) — NOT a streaming table — grouped by `chassis_no` producing `max_speed`, `avg_speed`, `avg_latitude`, `avg_longitude`, `reading_count`. A streaming table is append-only and will not recompute aggregates when source rows change (research R6)
+- [ ] T059 [US5] Implement `gold.customer_claim_policy` in `silver_to_gold.py` as a materialized view joining `silver.claim ⋈ silver.policy ⋈ silver.customer`, producing exactly one row per claim
+- [ ] T060 [US5] Implement `gold.customer_claim_policy_telematics` in `silver_to_gold.py` as a materialized view **left**-joining T059's output to `gold.telematics_agg` on `chassis_no`. The left join is required, not stylistic — a vehicle with no readings must still yield a claim row so its speed check can be recorded indeterminate rather than the claim disappearing (data-model.md)
+- [ ] T061 [US5] Create `resources/transform.pipeline.yml` with default catalog `smart_claims_dev`, default schema `silver`, serverless, and gold datasets written by fully-qualified name. Declare no `torch` dependency here — this pipeline does not need it
+- [ ] T062 [US5] Deploy and run the transform pipeline; verify SC-006 by inspecting the expectations panel — non-zero drops for `valid_claim_number` and `valid_incident_hour` are **expected**, because T018 seeded those defects. Zero drops means the expectations are not firing, not that the data is clean
+- [ ] T063 [US5] Verify SC-007: `silver.claim` count, `gold.customer_claim_policy_telematics` count, and its distinct `claim_no` count must all be equal. `gold_rows > distinct_claims` means a join fanned out — most likely telematics joined before aggregating
+- [ ] T064 [US5] Verify FR-023 is actually met, not silently degraded: confirm the gold MVs refresh incrementally, which requires serverless **and** `delta.enableRowTracking = true` on the sources set in T017. If they full-recompute, row tracking is missing
+- [ ] T065 [US5] Create `resources/orchestration.job.yml` declaring job `smart_claims_hourly` with `ingest_pipeline` → `transform_pipeline`, the second depending on the first's success (FR-024), on an hourly schedule **paused** until Phase 10
+- [ ] T066 [US5] Deploy and run `smart_claims_hourly`; confirm transform starts only after ingest succeeds, and that a deliberately failed ingest prevents transform from running
+
+**Checkpoint**: US5 complete. Trustworthy gold data, orchestrated.
+
+---
+
+## Phase 8: User Story 6 - Damage Classification and Automated Triage (Priority: P6)
+
+**Goal**: a tracked, governed classifier and a data-driven rules engine producing per-check triage outcomes.
+
+**Independent Test**: model registered with `@prod` alias and a confusion matrix; one claim per violated rule flagged for exactly that reason; a compliant claim approved.
+
+**⚠️ Modifies prior-phase code**: T077 extends `src/smart_claims/lib/decision.py` created in Phase 2 (T013). Its existing test `tests/unit/test_decision.py` (T009) must be **updated in place**, not duplicated — watch the new assertion go red, then green, then re-run the *full* file before committing.
+
+### Spike (run first)
+
+- [ ] T067 [US6] **Spike S1** — attempt to create a minimal custom model serving endpoint on this workspace and record the outcome in `research.md` under R9/S1. The workspace currently exposes only Foundation Model endpoints. If it succeeds, real-time inference becomes an enhancement in Phase 9; if it fails, record the exact error and proceed with batch scoring. **Nothing downstream may block on this** — no acceptance scenario depends on an endpoint existing
+
+### Implementation
+
+- [ ] T068 [US6] Implement `src/smart_claims/ml/resize_images.py` producing `gold.training_images_resized` — images resized to 224×224 via a `PIL`-based UDF (`PIL` 10.3.0 is present on serverless, research R1), preserving `path`, `label` and resized `content`
+- [ ] T069 [US6] Implement `src/smart_claims/ml/train_classifier.py` — load `gold.training_images_resized`, split train/test, normalise tensors, fine-tune `torchvision` ResNet-18 on CPU for a small number of epochs. Use ResNet-18 rather than a larger variant because no GPU is available (research R8)
+- [ ] T070 [US6] Extend `train_classifier.py` with MLflow tracking against a named experiment, logging hyperparameters, per-epoch metrics and the model artifact, wrapped as a PyFunc taking binary image content and returning a severity label plus confidence, with labels drawn from `lib.severity.MODEL_LABEL_MAP`
+- [ ] T071 [US6] Extend `train_classifier.py` to set `mlflow.set_registry_uri("databricks-uc")` and register the model as `smart_claims_dev.gold.claims_damage_level` with alias `@prod` (FR-027)
+- [ ] T072 [US6] Extend `train_classifier.py` to compute and log a per-class confusion matrix on the held-out split (FR-029, SC-009). Accuracy is **recorded, not thresholded** — a mediocre matrix is acceptable, an empty one is not
+- [ ] T073 [US6] Implement `src/smart_claims/ml/batch_score.py` producing `gold.claim_images_predicted` — load the model with `mlflow.pyfunc.spark_udf` at alias `@prod` and score `silver.claim_images`, writing `predicted_severity` and `prediction_confidence` alongside `claim_no`
+- [ ] T074 [US6] Create `resources/ml.job.yml` declaring a serverless job with tasks `resize_images` → `train_classifier` → `batch_score`, its environment declaring `torch`, `torchvision` and a pinned `mlflow>=3` (all absent or outdated on the base image — research R1). Keep training a **separate task** from scoring so scoring can re-run without retraining
+- [ ] T075 [US6] Implement `src/smart_claims/ml/seed_rules.py` creating `gold.claims_rules` per data-model.md and inserting the four seeded rules, with `check_expr` written so operands that are missing yield SQL `NULL` — do **not** wrap operands in `coalesce`, which would destroy the indeterminate signal (contracts/rules-engine.md)
+- [ ] T076 [US6] Implement `src/smart_claims/ml/evaluate_rules.py` — the generic evaluator reading all enabled rules and applying each to `gold.customer_claim_policy_telematics` left-joined to `gold.claim_images_predicted`, mapping each `check_expr` result `true → pass`, `false → fail`, `NULL → indeterminate`
+- [ ] T077 [US6] Extend `src/smart_claims/lib/decision.py` (from T013) with any composition logic the evaluator needs, and **update `tests/unit/test_decision.py` in place** with assertions for the new behaviour. Re-run the full file, not only the new test, before committing
+- [ ] T078 [US6] Complete `evaluate_rules.py` to write `gold.claim_insights` — one row per claim carrying every column of the joined input, `predicted_severity`, one result column per rule name, `overall_outcome` and `evaluated_at`. `release_funds` only when every check is `pass` (FR-033)
+- [ ] T079 [US6] Add `seed_rules` and `evaluate_rules` tasks to `resources/ml.job.yml`, and add a `score_and_triage` task (batch score + evaluate, no training) to `resources/orchestration.job.yml` downstream of transform
+- [ ] T080 [US6] Deploy and run the ML job; verify SC-008 — an MLflow run with logged parameters and metrics, and the model registered with a `@prod` alias traceable to that run
+- [ ] T081 [P] [US6] Write `tests/integration/test_rules_engine.py` (marked `workspace`) constructing one fixture claim per violated rule and asserting SC-010: each is `requires_investigation` with **exactly** that check `fail`; plus SC-011: a compliant claim is `release_funds`; plus a claim with no telematics is `requires_investigation` with the speed check `indeterminate`
+- [ ] T082 [US6] Verify SC-012: insert a fifth rule into `gold.claims_rules`, re-run the evaluator, and confirm all existing claims are re-scored and a new result column appears — **with no code change**
+- [ ] T083 [US6] Verify the spec's missing-data edge cases end to end: an orphan claim (seeded in T019) yields indeterminate coverage and policy-date checks and is routed to investigation, never silently approved
+
+**Checkpoint**: US6 complete. Governed model and extensible triage.
+
+---
+
+## Phase 9: User Story 7 - Business Consumption Surfaces (Priority: P7)
+
+**Goal**: dashboard, natural-language interface, and a claims portal with customer and admin modes.
+
+**Independent Test**: dashboard reconciles against direct queries; Genie answers a known question; a claim submitted through the portal returns the same decision the rules engine produces.
+
+**⚠️ Consumes prior-phase output**: the app reads `gold.claim_insights` from Phase 8 and MUST render its `indeterminate` results correctly — treating them as pass or fail is a defect.
+
+### Spike (run first)
+
+- [ ] T084 [US7] **Spike S2** — attempt to create one small Lakebase database instance and record the outcome in `research.md` under R9/S2. The workspace has the managed-Postgres plumbing but zero instances. If it fails, the app uses the warehouse-backed repository and SC-015's two-second target is relaxed per the spec's assumptions
+
+### Dashboard and Genie
+
+- [ ] T085 [P] [US7] Author `dashboards/claims_investigation.lvdash.json` with datasets over `gold.claim_insights`, parameterised by a start/end date range, and visuals for total claim volume, severity breakdown, and outcome split. **Test every SQL query via the CLI before deploying** — untested dashboard SQL is the most common cause of a broken deploy
+- [ ] T086 [US7] Create `resources/dashboard.yml` declaring the dashboard resource; deploy and verify SC-013 by reconciling the headline count against `SELECT count(*) FROM smart_claims_dev.gold.claim_insights`, and confirming every visual responds to the date filter
+- [ ] T087 [US7] Implement `src/smart_claims/genie/create_space.py` — an idempotent script creating a Genie space over the gold tables, reading the same configuration values the bundle uses so there is no second source of truth. Genie has **no bundle resource type** (research R2), so this script is the only way to satisfy FR-043 for it
+- [ ] T088 [US7] Run the Genie script and verify US7 scenario 3: ask "how many claims fall into each severity category", confirm the counts match a direct query and the generated SQL is visible
+
+### Serving copy
+
+- [ ] T089 [US7] If S2 succeeded, add `database_instances` and a `synced_database_tables` entry for `gold.customer_claim_policy_telematics` keyed on `claim_no` to `resources/`; if S2 failed, skip and record the substitution in `plan.md`'s risk table
+
+### Application
+
+- [ ] T090 [P] [US7] Implement `src/smart_claims/app/repository.py` — the `ClaimsRepository` interface covering every read and write in contracts/app-api.md. No handler may issue SQL directly; this interface is what lets S2's outcome change nothing above it
+- [ ] T091 [P] [US7] Implement `src/smart_claims/app/repository_warehouse.py` backing the interface via the SQL warehouse (`psycopg2` is present, but this path uses the SDK's SQL execution)
+- [ ] T092 [P] [US7] Implement `src/smart_claims/app/repository_lakebase.py` backing the interface via Lakebase Postgres, only if S2 succeeded
+- [ ] T093 [US7] Implement `src/smart_claims/app/main.py` — FastAPI app with startup-time repository selection, and `GET /health` returning `{"status","data_source"}` where `data_source` reports which repository resolved, making S2's outcome observable at runtime
+- [ ] T094 [US7] Implement `POST /api/claims/classify` in `main.py` per contracts/app-api.md — multipart image, returns predicted severity and confidence; **415** for non-image uploads (FR-041) and **413** for oversize. If S1 succeeded, call the endpoint; otherwise load the registered model in-process
+- [ ] T095 [US7] Implement `POST /api/claims` in `main.py` — validates all eight fields, records the claim, evaluates all four checks, and returns **201** with `claim_no`, `overall_outcome` and a `checks` array whose `result` values are `pass`/`fail`/`indeterminate`. Unknown `policy_no` returns the claim as `requires_investigation` with indeterminate coverage and policy-date checks, **not** a hard error. Duplicate submission returns **409** with the existing `claim_no` (spec edge case)
+- [ ] T096 [P] [US7] Implement `GET /api/admin/overview` and `GET /api/admin/claims/{claim_no}` in `main.py` per the contract, with `telematics: null` when a vehicle has no readings so the client renders the speed check as indeterminate rather than absent
+- [ ] T097 [P] [US7] Implement `GET /api/claims/{claim_no}/image` in `main.py` returning the stored photograph
+- [ ] T098 [US7] Implement the frontend in `src/smart_claims/app/static/` — customer mode (upload with pre-submission severity preview, the eight-field form, and a decision panel listing all four check results) and admin mode (overview with totals, severity breakdown and severity filter; analysis tab with per-claim checks, claim details, customer details and the image)
+- [ ] T099 [US7] Create `resources/app.yml` declaring the app with its SQL warehouse resource, plus the database resource if S2 succeeded and the serving endpoint if S1 succeeded
+- [ ] T100 [US7] Deploy and verify SC-014: upload a photo, see the predicted severity before submitting, complete the form, submit, and confirm the decision arrives within two minutes showing all four check results and matching what `evaluate_rules.py` independently produces for the same inputs. Confirm a non-image upload is rejected clearly
+- [ ] T101 [US7] Verify SC-015 and the admin flows: overview totals and severity filter work; opening a claim populates its detail view including the image in under two seconds. If S2 failed and this misses, record the measured latency rather than silently accepting it
+- [ ] T102 [P] [US7] Write `tests/unit/test_app_validation.py` covering request validation and the check-result serialisation, with no workspace dependency
+
+**Checkpoint**: US7 complete. All seven stories delivered.
+
+---
+
+## Phase 10: Polish & Cross-Cutting Concerns
+
+- [ ] T103 Enable the hourly schedule on `smart_claims_hourly` in `resources/orchestration.job.yml` (paused since T065) and confirm one unattended run completes end to end
+- [ ] T104 [P] Verify SC-016 from a clean checkout — `uv sync && uv run pytest tests/unit` passes with no workspace connection and no profile configured
+- [ ] T105 Verify SC-017 — deploy the bundle to an empty state and confirm a working system with no undocumented manual steps; correct `quickstart.md` wherever reality diverged from it
+- [ ] T106 [P] Write `README.md` at repo root covering purpose, the Free Edition substitutions from spec.md's table, deployment, and how the spikes resolved
+- [ ] T107 Reconcile `research.md` — record the actual outcomes of spikes S1 and S2 and any contingency taken in T050, so the document reflects what was built rather than what was planned
+- [ ] T108 Verify teardown safety: `databricks bundle destroy -t dev --profile DEFAULT` removes only this feature's assets and leaves the unrelated catalogs (`test`, `my_files`, `bridge_monitoring`, `claudecatalog`) and the pre-existing `agent-langgraph-agent-one` app untouched
+- [ ] T109 Run `superpowers:requesting-code-review` across the whole branch, then `superpowers:finishing-a-development-branch`
+
+---
+
+## Dependencies & Execution Order
+
+### Phase dependencies
+
+- **Phase 1 (Setup)**: no dependencies
+- **Phase 2 (Foundational)**: depends on Phase 1 — **blocks every user story**
+- **Phase 3 (US1)**: depends on Phase 2. Blocks US2–US7 in practice, because every downstream story reads the data it seeds
+- **Phase 4 (US2)**, **Phase 5 (US3)**, **Phase 6 (US4)**: each depends on Phase 3. **Mutually independent** — the three ingestion paths touch different files and different bronze tables
+- **Phase 7 (US5)**: depends on Phases 4, 5 and 6 — silver reads all bronze tables
+- **Phase 8 (US6)**: depends on Phase 7 — triage reads the gold joined view
+- **Phase 9 (US7)**: depends on Phase 8 — every surface reads `gold.claim_insights`
+- **Phase 10**: depends on all of the above
+
+This story graph is more sequential than the template's default. That is inherent to a medallion
+architecture, not a planning failure — silver cannot be built before bronze exists. The genuine
+parallelism is the three ingestion paths in Phases 4–6.
+
+### Within each story
+
+- Tests are written first and must fail before implementation
+- `lib/` pure functions before the pipeline code that imports them
+- Bronze before silver before gold
+- Spikes before any work that would depend on their outcome
+
+### Parallel opportunities
+
+- **T004, T005** in Setup
+- **T006–T009** (all four unit test files) then **T010–T013** (all four lib modules) in Foundational — eight tasks across eight files
+- **Phases 4, 5 and 6 in their entirety** — three ingestion paths, three separate files, three separate bronze table sets
+- **T054–T057** — four silver tables in the same file but independent dataset definitions; parallelise only if the implementer can avoid edit conflicts, otherwise treat as sequential
+- **T090–T092**, then **T096, T097** in the app
+- **T104, T106** in polish
+
+---
+
+## Parallel Example: Phase 2 Foundational
+
+```bash
+# Write all four unit test files together (they must fail first):
+Task: "Write tests/unit/test_severity.py"
+Task: "Write tests/unit/test_payload.py"
+Task: "Write tests/unit/test_cleaning.py"
+Task: "Write tests/unit/test_decision.py"
+
+# Then implement all four pure modules together:
+Task: "Implement src/smart_claims/lib/severity.py"
+Task: "Implement src/smart_claims/lib/payload.py"
+Task: "Implement src/smart_claims/lib/cleaning.py"
+Task: "Implement src/smart_claims/lib/decision.py"
+```
+
+## Parallel Example: Phases 4–6 Ingestion
+
+```bash
+# Three independent ingestion paths after US1 completes:
+Task: "Phase 4 (T025-T033): telematics producer and Auto Loader decode"
+Task: "Phase 5 (T034-T042): Auto CDC from Delta change feed"
+Task: "Phase 6 (T043-T052): binaryFile, CSV drift, cleanSource archive"
+```
+
+---
+
+## Implementation Strategy
+
+### MVP
+
+Phases 1–3 (T001–T024). Delivers a governed catalog with seeded, referentially consistent source
+data and labelled images — the foundation every other story reads. **Stop and validate** against
+SC-001 before continuing.
+
+### Incremental delivery
+
+Each of Phases 4 through 9 is independently demonstrable and can be stopped at:
+
+1. **+US2** — telematics decoded into typed bronze columns, both modes
+2. **+US3** — insert/update/delete converging into bronze
+3. **+US4** — images ingested, drift handled both ways, files archived
+4. **+US5** — quality-enforced silver and joined gold, orchestrated hourly
+5. **+US6** — governed classifier and extensible triage
+6. **+US7** — dashboard, Genie, and the claims portal
+
+### Dispatch grouping (per the project's subagent workflow)
+
+- **Phases 1 + 2**: one lightweight dispatch, no separate reviewer gate — prerequisite plumbing
+- **Phase 3 onward**: group by deliverable. Sequential tasks building one deliverable bundle into
+  one dispatch; `[P]` tasks on separate files get their own. Each group: implementer → reviewer
+  (spec compliance + code quality) → fix loop until clean
+- **Reviewer context**: source Global Constraints from spec.md's FRs and success criteria plus
+  plan.md's Technical Context. `.specify/memory/constitution.md` is an **unfilled template** — it
+  provides no gates (plan.md Constitution Check), so reviewers must not treat it as one
+- **Test compliance**: tests are required for this feature. Reviewers verify the test files are
+  present **in the diff** — not merely quoted in the implementer's report — and that RED/GREEN
+  evidence is included
+
+### Ledger format
+
+```
+Phase 3 (T017-T024) [US1]: complete (commits <base7>..<head7>, review clean)
+Phase 8 group C (T075-T078) [US6]: complete — extends lib/decision.py from Phase 2 (T013),
+  tests/unit/test_decision.py updated in place, full file re-run, review clean
+```
+
+---
+
+## Notes
+
+- `[P]` means different files and no dependency on an incomplete task
+- Commit after each task or logical group; test files are committed **with** their implementation
+- Verify tests fail before implementing — a test that passes before the code exists is testing nothing
+- Stop at any checkpoint to validate a story independently
+- Keep continuous pipelines stopped except during their demonstration (T031/T032) — Free Edition
+  serverless quota is finite and a forgotten continuous pipeline will consume it
