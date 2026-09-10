@@ -17,6 +17,7 @@ success criteria. Run them in order — later sections depend on earlier data.
 ```bash
 uv sync
 uv run pytest tests/unit -v
+# note: pytest defaults to -m 'not workspace', so integration runs need an explicit -m workspace
 ```
 
 **Expect**: all pass. This is SC-016. It must pass before anything is deployed — it covers
@@ -141,6 +142,16 @@ databricks experimental aitools tools query \
 **Expect**: all three equal. `gold_rows > distinct_claims` means a join fanned out — most likely
 telematics joined without aggregating first.
 
+**Amount rule (SC-007a)**: confirm no `silver.claim` row has `total_claim_amount <= 0`, and that
+the quality report attributes the drops to `positive_claim_amount`.
+
+**Schema contract (SC-007b)**: drop a depended-upon column from a source table, re-run transform,
+and confirm it **fails with an error naming that column** rather than emitting null-filled rows.
+Restore the column afterwards.
+
+**Two accidents, one vehicle (SC-007)**: pick a chassis with readings on two dates and confirm
+each claim gets the `max_speed` from its own incident date, not a shared figure.
+
 **Cleaning spot checks**: `silver.customer` has populated `first_name` and `last_name`;
 `silver.policy` has no negative `premium`; date columns are `DATE`/`TIMESTAMP`, not `STRING`.
 
@@ -169,7 +180,7 @@ mediocre matrix is an acceptable outcome; an empty one is not.
 **Rules (SC-010, SC-011)** — the triage test fixtures construct one claim per violated rule:
 
 ```bash
-uv run pytest tests/integration/test_rules_engine.py -v --profile DEFAULT
+uv run pytest tests/integration/test_rules_engine.py -v -m workspace --profile DEFAULT
 ```
 
 **Expect**: for each of the four checks, the claim violating only that check is

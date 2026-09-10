@@ -83,7 +83,7 @@ green.
 **Independent Test**: run the setup job; four schemas populated, source tables referentially consistent, training-image volume holding ≥3 labels with ≥20 images each.
 
 - [ ] T017 [US1] Implement `src/smart_claims/setup/seed_source_data.py` generating ~1000 customers, ~1200 policies, ~1300 claims per the schemas in data-model.md, writing to `source.customer`, `source.policy`, `source.claim` with `delta.enableChangeDataFeed = true` AND `delta.enableRowTracking = true` on all three (row tracking is required for gold MVs to refresh incrementally rather than silently full-recompute — research R6, FR-023)
-- [ ] T018 [US1] Extend `seed_source_data.py` to inject the **deliberate defects** the later phases prove they catch: some `claim.claim_no` NULL; some `claim.incident_hour` outside 0–23; some `policy.premium` negative; `customer.name` always a combined `"First Last"`; `customer.address` with inconsistent whitespace and casing. Dates written as text in four distinct formats — `claim_date` as `yyyy-MM-dd HH:mm:ss`, `incident_date` as `MM/dd/yyyy`, `driver_license_issue_date` as `dd/MM/yyyy`, `policy.pol_issue_date` as `dd-MM-yyyy`, `pol_eff_date`/`pol_expiry_date` as `yyyy-MM-dd`
+- [ ] T018 [US1] Extend `seed_source_data.py` to inject the **deliberate defects** the later phases prove they catch: some `claim.claim_no` NULL; some `claim.incident_hour` outside 0–23; some `policy.premium` negative; some `claim.total_claim_amount` zero or negative; `customer.name` always a combined `"First Last"`; `customer.address` with inconsistent whitespace and casing. Dates written as text in four distinct formats — `claim_date` as `yyyy-MM-dd HH:mm:ss`, `incident_date` as `MM/dd/yyyy`, `driver_license_issue_date` as `dd/MM/yyyy`, `policy.pol_issue_date` as `dd-MM-yyyy`, `pol_eff_date`/`pol_expiry_date` as `yyyy-MM-dd`
 - [ ] T019 [US1] Ensure referential consistency in `seed_source_data.py`: every `claim.policy_no` resolves to a policy and every `policy.customer_id` to a customer, EXCEPT a small deliberate set of orphan claims to exercise the missing-policy edge case. Assign `policy.chassis_no` values that the telematics producer will later emit for
 - [ ] T020 [US1] Implement `src/smart_claims/setup/fetch_training_images.py` with an **explicit egress check first** (FR-004) — attempt an HTTPS request and fail with an actionable message naming the fallback if it fails. Egress was confirmed working during planning (research R1), so a failure here is a change in conditions, not a design error
 - [ ] T021 [US1] Extend `fetch_training_images.py` to download a public labelled car-damage-severity dataset and write images into `/Volumes/smart_claims_dev/landing/training_images/<severity_label>/<file>.jpg` so the label is recoverable from the path, normalising each label through `lib.severity.normalize`
@@ -162,20 +162,21 @@ green.
 
 **Independent Test**: injected invalid records excluded from silver and reported; gold joins neither lose nor duplicate claims; scheduled job runs in dependency order.
 
-- [ ] T053 [US5] Implement `silver.claim` in `src/smart_claims/transform/bronze_to_silver.py` with `@dp.expect_all_or_drop` carrying exactly two constraints — `valid_claim_number: claim_no IS NOT NULL` and `valid_incident_hour: incident_hour BETWEEN 0 AND 23` — coercing all four date columns using their respective formats via `lib.cleaning.parse_date`, and dropping `_rescued_data`
+- [ ] T053 [US5] Implement `silver.claim` in `src/smart_claims/transform/bronze_to_silver.py` with `@dp.expect_all_or_drop` carrying exactly three constraints — `valid_claim_number: claim_no IS NOT NULL`, `valid_incident_hour: incident_hour BETWEEN 0 AND 23` and `positive_claim_amount: total_claim_amount > 0` (FR-015) — coercing all four date columns using their respective formats via `lib.cleaning.parse_date`, and dropping `_rescued_data`
 - [ ] T054 [P] [US5] Implement `silver.policy` in `bronze_to_silver.py` with `expect_all_or_drop` on `valid_policy_number: policy_no IS NOT NULL`, `premium → abs(premium)` (FR-019), and the three date columns coerced with their distinct formats
 - [ ] T055 [P] [US5] Implement `silver.customer` in `bronze_to_silver.py` with `expect_all_or_drop` on `valid_customer_id: customer_id IS NOT NULL`, `name` split into `first_name`/`last_name` via `lib.cleaning.split_name`, `address` normalised via `lib.cleaning.normalize_address`, and `date_of_birth` coerced
 - [ ] T056 [P] [US5] Implement `silver.telematics` in `bronze_to_silver.py` with `expect_all_or_drop` on `chassis_no IS NOT NULL` and `speed >= 0`, casting speed/latitude/longitude to DOUBLE and `event_timestamp` to TIMESTAMP
 - [ ] T057 [P] [US5] Implement `silver.training_images` and `silver.claim_images` in `bronze_to_silver.py`; `silver.claim_images` joins `bronze.claim_images` to `bronze.claim_images_meta` to attach `claim_no`, with `expect_all_or_drop` on `claim_no IS NOT NULL`
-- [ ] T058 [US5] Implement `gold.telematics_agg` in `src/smart_claims/transform/silver_to_gold.py` as a **Materialized View** (`@dp.materialized_view`) — NOT a streaming table — grouped by `chassis_no` producing `max_speed`, `avg_speed`, `avg_latitude`, `avg_longitude`, `reading_count`. A streaming table is append-only and will not recompute aggregates when source rows change (research R6)
+- [ ] T058 [US5] Implement `gold.telematics_agg` in `src/smart_claims/transform/silver_to_gold.py` as a **Materialized View** (`@dp.materialized_view`) — NOT a streaming table — grouped by `chassis_no` **and `event_date`** (the date part of `event_timestamp`) producing `max_speed`, `avg_speed`, `avg_latitude`, `avg_longitude`, `reading_count`. The date grain is required (FR-021): grouping by vehicle alone would judge a claim against a speed recorded on an unrelated day. A streaming table is append-only and will not recompute aggregates when source rows change (research R6)
 - [ ] T059 [US5] Implement `gold.customer_claim_policy` in `silver_to_gold.py` as a materialized view joining `silver.claim ⋈ silver.policy ⋈ silver.customer`, producing exactly one row per claim
-- [ ] T060 [US5] Implement `gold.customer_claim_policy_telematics` in `silver_to_gold.py` as a materialized view **left**-joining T059's output to `gold.telematics_agg` on `chassis_no`. The left join is required, not stylistic — a vehicle with no readings must still yield a claim row so its speed check can be recorded indeterminate rather than the claim disappearing (data-model.md)
+- [ ] T060 [US5] Implement `gold.customer_claim_policy_telematics` in `silver_to_gold.py` as a materialized view **left**-joining T059's output to `gold.telematics_agg` on `chassis_no` **AND `event_date = incident_date`** (FR-022). The left join is required, not stylistic — a vehicle with no readings must still yield a claim row so its speed check can be recorded indeterminate rather than the claim disappearing (data-model.md)
 - [ ] T061 [US5] Create `resources/transform.pipeline.yml` with default catalog `smart_claims_dev`, default schema `silver`, serverless, and gold datasets written by fully-qualified name. Declare no `torch` dependency here — this pipeline does not need it
 - [ ] T062 [US5] Deploy and run the transform pipeline; verify SC-006 by inspecting the expectations panel — non-zero drops for `valid_claim_number` and `valid_incident_hour` are **expected**, because T018 seeded those defects. Zero drops means the expectations are not firing, not that the data is clean
 - [ ] T063 [US5] Verify SC-007: `silver.claim` count, `gold.customer_claim_policy_telematics` count, and its distinct `claim_no` count must all be equal. `gold_rows > distinct_claims` means a join fanned out — most likely telematics joined before aggregating
 - [ ] T064 [US5] Verify FR-023 is actually met, not silently degraded: confirm the gold MVs refresh incrementally, which requires serverless **and** `delta.enableRowTracking = true` on the sources set in T017. If they full-recompute, row tracking is missing
-- [ ] T065 [US5] Create `resources/orchestration.job.yml` declaring job `smart_claims_hourly` with `ingest_pipeline` → `transform_pipeline`, the second depending on the first's success (FR-024), on an hourly schedule **paused** until Phase 10
-- [ ] T066 [US5] Deploy and run `smart_claims_hourly`; confirm transform starts only after ingest succeeds, and that a deliberately failed ingest prevents transform from running
+- [ ] T065 [US5] Enforce the source schema contract (FR-045) in `src/smart_claims/transform/bronze_to_silver.py` — declare the columns each silver dataset depends on and fail the update with an error naming the missing column if one is absent, rather than emitting null-filled rows. Verify SC-007b by dropping a depended-upon column from a source table and confirming the failure message names it
+- [ ] T066 [US5] Create `resources/orchestration.job.yml` declaring job `smart_claims_hourly` with `ingest_pipeline` → `transform_pipeline`, the second depending on the first's success (FR-024), on an hourly schedule **paused** until Phase 10
+- [ ] T067 [US5] Deploy and run `smart_claims_hourly`; confirm transform starts only after ingest succeeds, and that a deliberately failed ingest prevents transform from running
 
 **Checkpoint**: US5 complete. Trustworthy gold data, orchestrated.
 
@@ -187,30 +188,30 @@ green.
 
 **Independent Test**: model registered with `@prod` alias and a confusion matrix; one claim per violated rule flagged for exactly that reason; a compliant claim approved.
 
-**⚠️ Modifies prior-phase code**: T077 extends `src/smart_claims/lib/decision.py` created in Phase 2 (T013). Its existing test `tests/unit/test_decision.py` (T009) must be **updated in place**, not duplicated — watch the new assertion go red, then green, then re-run the *full* file before committing.
+**⚠️ Modifies prior-phase code**: T078 extends `src/smart_claims/lib/decision.py` created in Phase 2 (T013). Its existing test `tests/unit/test_decision.py` (T009) must be **updated in place**, not duplicated — watch the new assertion go red, then green, then re-run the *full* file before committing.
 
 ### Spike (run first)
 
-- [ ] T067 [US6] **Spike S1** — attempt to create a minimal custom model serving endpoint on this workspace and record the outcome in `research.md` under R9/S1. The workspace currently exposes only Foundation Model endpoints. If it succeeds, real-time inference becomes an enhancement in Phase 9; if it fails, record the exact error and proceed with batch scoring. **Nothing downstream may block on this** — no acceptance scenario depends on an endpoint existing
+- [ ] T068 [US6] **Spike S1** — attempt to create a minimal custom model serving endpoint on this workspace and record the outcome in `research.md` under R9/S1. The workspace currently exposes only Foundation Model endpoints. If it succeeds, real-time inference becomes an enhancement in Phase 9; if it fails, record the exact error and proceed with batch scoring. **Nothing downstream may block on this** — no acceptance scenario depends on an endpoint existing
 
 ### Implementation
 
-- [ ] T068 [US6] Implement `src/smart_claims/ml/resize_images.py` producing `gold.training_images_resized` — images resized to 224×224 via a `PIL`-based UDF (`PIL` 10.3.0 is present on serverless, research R1), preserving `path`, `label` and resized `content`
-- [ ] T069 [US6] Implement `src/smart_claims/ml/train_classifier.py` — load `gold.training_images_resized`, split train/test, normalise tensors, fine-tune `torchvision` ResNet-18 on CPU for a small number of epochs. Use ResNet-18 rather than a larger variant because no GPU is available (research R8)
-- [ ] T070 [US6] Extend `train_classifier.py` with MLflow tracking against a named experiment, logging hyperparameters, per-epoch metrics and the model artifact, wrapped as a PyFunc taking binary image content and returning a severity label plus confidence, with labels drawn from `lib.severity.MODEL_LABEL_MAP`
-- [ ] T071 [US6] Extend `train_classifier.py` to set `mlflow.set_registry_uri("databricks-uc")` and register the model as `smart_claims_dev.gold.claims_damage_level` with alias `@prod` (FR-027)
-- [ ] T072 [US6] Extend `train_classifier.py` to compute and log a per-class confusion matrix on the held-out split (FR-029, SC-009). Accuracy is **recorded, not thresholded** — a mediocre matrix is acceptable, an empty one is not
-- [ ] T073 [US6] Implement `src/smart_claims/ml/batch_score.py` producing `gold.claim_images_predicted` — load the model with `mlflow.pyfunc.spark_udf` at alias `@prod` and score `silver.claim_images`, writing `predicted_severity` and `prediction_confidence` alongside `claim_no`
-- [ ] T074 [US6] Create `resources/ml.job.yml` declaring a serverless job with tasks `resize_images` → `train_classifier` → `batch_score`, its environment declaring `torch`, `torchvision` and a pinned `mlflow>=3` (all absent or outdated on the base image — research R1). Keep training a **separate task** from scoring so scoring can re-run without retraining
-- [ ] T075 [US6] Implement `src/smart_claims/ml/seed_rules.py` creating `gold.claims_rules` per data-model.md and inserting the four seeded rules, with `check_expr` written so operands that are missing yield SQL `NULL` — do **not** wrap operands in `coalesce`, which would destroy the indeterminate signal (contracts/rules-engine.md)
-- [ ] T076 [US6] Implement `src/smart_claims/ml/evaluate_rules.py` — the generic evaluator reading all enabled rules and applying each to `gold.customer_claim_policy_telematics` left-joined to `gold.claim_images_predicted`, mapping each `check_expr` result `true → pass`, `false → fail`, `NULL → indeterminate`
-- [ ] T077 [US6] Extend `src/smart_claims/lib/decision.py` (from T013) with any composition logic the evaluator needs, and **update `tests/unit/test_decision.py` in place** with assertions for the new behaviour. Re-run the full file, not only the new test, before committing
-- [ ] T078 [US6] Complete `evaluate_rules.py` to write `gold.claim_insights` — one row per claim carrying every column of the joined input, `predicted_severity`, one result column per rule name, `overall_outcome` and `evaluated_at`. `release_funds` only when every check is `pass` (FR-033)
-- [ ] T079 [US6] Add `seed_rules` and `evaluate_rules` tasks to `resources/ml.job.yml`, and add a `score_and_triage` task (batch score + evaluate, no training) to `resources/orchestration.job.yml` downstream of transform
-- [ ] T080 [US6] Deploy and run the ML job; verify SC-008 — an MLflow run with logged parameters and metrics, and the model registered with a `@prod` alias traceable to that run
-- [ ] T081 [P] [US6] Write `tests/integration/test_rules_engine.py` (marked `workspace`) constructing one fixture claim per violated rule and asserting SC-010: each is `requires_investigation` with **exactly** that check `fail`; plus SC-011: a compliant claim is `release_funds`; plus a claim with no telematics is `requires_investigation` with the speed check `indeterminate`
-- [ ] T082 [US6] Verify SC-012: insert a fifth rule into `gold.claims_rules`, re-run the evaluator, and confirm all existing claims are re-scored and a new result column appears — **with no code change**
-- [ ] T083 [US6] Verify the spec's missing-data edge cases end to end: an orphan claim (seeded in T019) yields indeterminate coverage and policy-date checks and is routed to investigation, never silently approved
+- [ ] T069 [US6] Implement `src/smart_claims/ml/resize_images.py` producing `gold.training_images_resized` — images resized to 224×224 via a `PIL`-based UDF (`PIL` 10.3.0 is present on serverless, research R1), preserving `path`, `label` and resized `content`
+- [ ] T070 [US6] Implement `src/smart_claims/ml/train_classifier.py` — load `gold.training_images_resized`, split train/test, normalise tensors, fine-tune `torchvision` ResNet-18 on CPU for a small number of epochs. Use ResNet-18 rather than a larger variant because no GPU is available (research R8)
+- [ ] T071 [US6] Extend `train_classifier.py` with MLflow tracking against a named experiment, logging hyperparameters, per-epoch metrics and the model artifact, wrapped as a PyFunc taking binary image content and returning a severity label plus confidence, with labels drawn from `lib.severity.MODEL_LABEL_MAP`
+- [ ] T072 [US6] Extend `train_classifier.py` to set `mlflow.set_registry_uri("databricks-uc")` and register the model as `smart_claims_dev.gold.claims_damage_level` with alias `@prod` (FR-027)
+- [ ] T073 [US6] Extend `train_classifier.py` to compute and log a per-class confusion matrix on the held-out split (FR-029, SC-009). Accuracy is **recorded, not thresholded** — a mediocre matrix is acceptable, an empty one is not
+- [ ] T074 [US6] Implement `src/smart_claims/ml/batch_score.py` producing `gold.claim_images_predicted` — load the model with `mlflow.pyfunc.spark_udf` at alias `@prod` and score `silver.claim_images`, writing `predicted_severity` and `prediction_confidence` alongside `claim_no`
+- [ ] T075 [US6] Create `resources/ml.job.yml` declaring a serverless job with tasks `resize_images` → `train_classifier` → `batch_score`, its environment declaring `torch`, `torchvision` and a pinned `mlflow>=3` (all absent or outdated on the base image — research R1). Keep training a **separate task** from scoring so scoring can re-run without retraining
+- [ ] T076 [US6] Implement `src/smart_claims/ml/seed_rules.py` creating `gold.claims_rules` per data-model.md and inserting the four seeded rules, with `check_expr` written so operands that are missing yield SQL `NULL` — do **not** wrap operands in `coalesce`, which would destroy the indeterminate signal (contracts/rules-engine.md)
+- [ ] T077 [US6] Implement `src/smart_claims/ml/evaluate_rules.py` — the generic evaluator reading all enabled rules and applying each to `gold.customer_claim_policy_telematics` left-joined to `gold.claim_images_predicted`, mapping each `check_expr` result `true → pass`, `false → fail`, `NULL → indeterminate`
+- [ ] T078 [US6] Extend `src/smart_claims/lib/decision.py` (from T013) with any composition logic the evaluator needs, and **update `tests/unit/test_decision.py` in place** with assertions for the new behaviour. Re-run the full file, not only the new test, before committing
+- [ ] T079 [US6] Complete `evaluate_rules.py` to write `gold.claim_insights` — one row per claim carrying every column of the joined input, `predicted_severity`, one result column per rule name, `overall_outcome` and `evaluated_at`. `release_funds` only when every check is `pass` (FR-033)
+- [ ] T080 [US6] Add `seed_rules` and `evaluate_rules` tasks to `resources/ml.job.yml`, and add a `score_and_triage` task (batch score + evaluate, no training) to `resources/orchestration.job.yml` downstream of transform
+- [ ] T081 [US6] Deploy and run the ML job; verify SC-008 — an MLflow run with logged parameters and metrics, and the model registered with a `@prod` alias traceable to that run
+- [ ] T082 [P] [US6] Write `tests/integration/test_rules_engine.py` (marked `workspace`) constructing one fixture claim per violated rule and asserting SC-010: each is `requires_investigation` with **exactly** that check `fail`; plus SC-011: a compliant claim is `release_funds`; plus a claim with no telematics is `requires_investigation` with the speed check `indeterminate`
+- [ ] T083 [US6] Verify SC-012: insert a fifth rule into `gold.claims_rules`, re-run the evaluator, and confirm all existing claims are re-scored and a new result column appears — **with no code change**
+- [ ] T084 [US6] Verify the spec's missing-data edge cases end to end: an orphan claim (seeded in T019) yields indeterminate coverage and policy-date checks and is routed to investigation, never silently approved
 
 **Checkpoint**: US6 complete. Governed model and extensible triage.
 
@@ -226,34 +227,34 @@ green.
 
 ### Spike (run first)
 
-- [ ] T084 [US7] **Spike S2** — attempt to create one small Lakebase database instance and record the outcome in `research.md` under R9/S2. The workspace has the managed-Postgres plumbing but zero instances. If it fails, the app uses the warehouse-backed repository and SC-015's two-second target is relaxed per the spec's assumptions
+- [ ] T085 [US7] **Spike S2** — attempt to create one small Lakebase database instance and record the outcome in `research.md` under R9/S2. The workspace has the managed-Postgres plumbing but zero instances. If it fails, the app uses the warehouse-backed repository and SC-015's two-second target is relaxed per the spec's assumptions
 
 ### Dashboard and Genie
 
-- [ ] T085 [P] [US7] Author `dashboards/claims_investigation.lvdash.json` with datasets over `gold.claim_insights`, parameterised by a start/end date range, and visuals for total claim volume, severity breakdown, and outcome split. **Test every SQL query via the CLI before deploying** — untested dashboard SQL is the most common cause of a broken deploy
-- [ ] T086 [US7] Create `resources/dashboard.yml` declaring the dashboard resource; deploy and verify SC-013 by reconciling the headline count against `SELECT count(*) FROM smart_claims_dev.gold.claim_insights`, and confirming every visual responds to the date filter
-- [ ] T087 [US7] Implement `src/smart_claims/genie/create_space.py` — an idempotent script creating a Genie space over the gold tables, reading the same configuration values the bundle uses so there is no second source of truth. Genie has **no bundle resource type** (research R2), so this script is the only way to satisfy FR-043 for it
-- [ ] T088 [US7] Run the Genie script and verify US7 scenario 3: ask "how many claims fall into each severity category", confirm the counts match a direct query and the generated SQL is visible
+- [ ] T086 [P] [US7] Author `dashboards/claims_investigation.lvdash.json` with datasets over `gold.claim_insights`, parameterised by a start/end date range, and visuals for total claim volume, severity breakdown, and outcome split. **Test every SQL query via the CLI before deploying** — untested dashboard SQL is the most common cause of a broken deploy
+- [ ] T087 [US7] Create `resources/dashboard.yml` declaring the dashboard resource; deploy and verify SC-013 by reconciling the headline count against `SELECT count(*) FROM smart_claims_dev.gold.claim_insights`, and confirming every visual responds to the date filter
+- [ ] T088 [US7] Implement `src/smart_claims/genie/create_space.py` — an idempotent script creating a Genie space over the gold tables, reading the same configuration values the bundle uses so there is no second source of truth. Genie has **no bundle resource type** (research R2), so this script is the only way to satisfy FR-043 for it
+- [ ] T089 [US7] Run the Genie script and verify US7 scenario 3: ask "how many claims fall into each severity category", confirm the counts match a direct query and the generated SQL is visible
 
 ### Serving copy
 
-- [ ] T089 [US7] If S2 succeeded, add `database_instances` and a `synced_database_tables` entry for `gold.customer_claim_policy_telematics` keyed on `claim_no` to `resources/`; if S2 failed, skip and record the substitution in `plan.md`'s risk table
+- [ ] T090 [US7] If S2 succeeded, add `database_instances` and a `synced_database_tables` entry for `gold.customer_claim_policy_telematics` keyed on `claim_no` to `resources/`; if S2 failed, skip and record the substitution in `plan.md`'s risk table
 
 ### Application
 
-- [ ] T090 [P] [US7] Implement `src/smart_claims/app/repository.py` — the `ClaimsRepository` interface covering every read and write in contracts/app-api.md. No handler may issue SQL directly; this interface is what lets S2's outcome change nothing above it
-- [ ] T091 [P] [US7] Implement `src/smart_claims/app/repository_warehouse.py` backing the interface via the SQL warehouse (`psycopg2` is present, but this path uses the SDK's SQL execution)
-- [ ] T092 [P] [US7] Implement `src/smart_claims/app/repository_lakebase.py` backing the interface via Lakebase Postgres, only if S2 succeeded
-- [ ] T093 [US7] Implement `src/smart_claims/app/main.py` — FastAPI app with startup-time repository selection, and `GET /health` returning `{"status","data_source"}` where `data_source` reports which repository resolved, making S2's outcome observable at runtime
-- [ ] T094 [US7] Implement `POST /api/claims/classify` in `main.py` per contracts/app-api.md — multipart image, returns predicted severity and confidence; **415** for non-image uploads (FR-041) and **413** for oversize. If S1 succeeded, call the endpoint; otherwise load the registered model in-process
-- [ ] T095 [US7] Implement `POST /api/claims` in `main.py` — validates all eight fields, records the claim, evaluates all four checks, and returns **201** with `claim_no`, `overall_outcome` and a `checks` array whose `result` values are `pass`/`fail`/`indeterminate`. Unknown `policy_no` returns the claim as `requires_investigation` with indeterminate coverage and policy-date checks, **not** a hard error. Duplicate submission returns **409** with the existing `claim_no` (spec edge case)
-- [ ] T096 [P] [US7] Implement `GET /api/admin/overview` and `GET /api/admin/claims/{claim_no}` in `main.py` per the contract, with `telematics: null` when a vehicle has no readings so the client renders the speed check as indeterminate rather than absent
-- [ ] T097 [P] [US7] Implement `GET /api/claims/{claim_no}/image` in `main.py` returning the stored photograph
-- [ ] T098 [US7] Implement the frontend in `src/smart_claims/app/static/` — customer mode (upload with pre-submission severity preview, the eight-field form, and a decision panel listing all four check results) and admin mode (overview with totals, severity breakdown and severity filter; analysis tab with per-claim checks, claim details, customer details and the image)
-- [ ] T099 [US7] Create `resources/app.yml` declaring the app with its SQL warehouse resource, plus the database resource if S2 succeeded and the serving endpoint if S1 succeeded
-- [ ] T100 [US7] Deploy and verify SC-014: upload a photo, see the predicted severity before submitting, complete the form, submit, and confirm the decision arrives within two minutes showing all four check results and matching what `evaluate_rules.py` independently produces for the same inputs. Confirm a non-image upload is rejected clearly
-- [ ] T101 [US7] Verify SC-015 and the admin flows: overview totals and severity filter work; opening a claim populates its detail view including the image in under two seconds. If S2 failed and this misses, record the measured latency rather than silently accepting it
-- [ ] T102 [P] [US7] Write `tests/unit/test_app_validation.py` covering request validation and the check-result serialisation, with no workspace dependency
+- [ ] T091 [P] [US7] Implement `src/smart_claims/app/repository.py` — the `ClaimsRepository` interface covering every read and write in contracts/app-api.md. No handler may issue SQL directly; this interface is what lets S2's outcome change nothing above it
+- [ ] T092 [P] [US7] Implement `src/smart_claims/app/repository_warehouse.py` backing the interface via the SQL warehouse (`psycopg2` is present, but this path uses the SDK's SQL execution)
+- [ ] T093 [P] [US7] Implement `src/smart_claims/app/repository_lakebase.py` backing the interface via Lakebase Postgres, only if S2 succeeded
+- [ ] T094 [US7] Implement `src/smart_claims/app/main.py` — FastAPI app with startup-time repository selection, and `GET /health` returning `{"status","data_source"}` where `data_source` reports which repository resolved, making S2's outcome observable at runtime
+- [ ] T095 [US7] Implement `POST /api/claims/classify` in `main.py` per contracts/app-api.md — multipart image, returns predicted severity and confidence; **415** for non-image uploads (FR-041) and **413** for oversize. If S1 succeeded, call the endpoint; otherwise load the registered model in-process
+- [ ] T096 [US7] Implement `POST /api/claims` in `main.py` — validates all eight fields, records the claim, evaluates all four checks, and returns **201** with `claim_no`, `overall_outcome` and a `checks` array whose `result` values are `pass`/`fail`/`indeterminate`. Unknown `policy_no` returns the claim as `requires_investigation` with indeterminate coverage and policy-date checks, **not** a hard error. Duplicate submission returns **409** with the existing `claim_no` (spec edge case)
+- [ ] T097 [P] [US7] Implement `GET /api/admin/overview` and `GET /api/admin/claims/{claim_no}` in `main.py` per the contract, with `telematics: null` when a vehicle has no readings so the client renders the speed check as indeterminate rather than absent
+- [ ] T098 [P] [US7] Implement `GET /api/claims/{claim_no}/image` in `main.py` returning the stored photograph
+- [ ] T099 [US7] Implement the frontend in `src/smart_claims/app/static/` — customer mode (upload with pre-submission severity preview, the eight-field form, and a decision panel listing all four check results) and admin mode (overview with totals, severity breakdown and severity filter; analysis tab with per-claim checks, claim details, customer details and the image)
+- [ ] T100 [US7] Create `resources/app.yml` declaring the app with its SQL warehouse resource, plus the database resource if S2 succeeded and the serving endpoint if S1 succeeded
+- [ ] T101 [US7] Deploy and verify SC-014: upload a photo, see the predicted severity before submitting, complete the form, submit, and confirm the decision arrives within two minutes showing all four check results and matching what `evaluate_rules.py` independently produces for the same inputs. Confirm a non-image upload is rejected clearly
+- [ ] T102 [US7] Verify SC-015 and the admin flows: overview totals and severity filter work; opening a claim populates its detail view including the image in under two seconds. If S2 failed and this misses, record the measured latency rather than silently accepting it
+- [ ] T103 [P] [US7] Write `tests/unit/test_app_validation.py` covering request validation and the check-result serialisation, with no workspace dependency
 
 **Checkpoint**: US7 complete. All seven stories delivered.
 
@@ -261,13 +262,16 @@ green.
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [ ] T103 Enable the hourly schedule on `smart_claims_hourly` in `resources/orchestration.job.yml` (paused since T065) and confirm one unattended run completes end to end
-- [ ] T104 [P] Verify SC-016 from a clean checkout — `uv sync && uv run pytest tests/unit` passes with no workspace connection and no profile configured
-- [ ] T105 Verify SC-017 — deploy the bundle to an empty state and confirm a working system with no undocumented manual steps; correct `quickstart.md` wherever reality diverged from it
-- [ ] T106 [P] Write `README.md` at repo root covering purpose, the Free Edition substitutions from spec.md's table, deployment, and how the spikes resolved
-- [ ] T107 Reconcile `research.md` — record the actual outcomes of spikes S1 and S2 and any contingency taken in T050, so the document reflects what was built rather than what was planned
-- [ ] T108 Verify teardown safety: `databricks bundle destroy -t dev --profile DEFAULT` removes only this feature's assets and leaves the unrelated catalogs (`test`, `my_files`, `bridge_monitoring`, `claudecatalog`) and the pre-existing `agent-langgraph-agent-one` app untouched
-- [ ] T109 Run `superpowers:requesting-code-review` across the whole branch, then `superpowers:finishing-a-development-branch`
+- [ ] T104 Enable the hourly schedule on `smart_claims_hourly` in `resources/orchestration.job.yml` (paused since T066) and confirm one unattended run completes end to end
+- [ ] T105 [P] Verify SC-016 from a clean checkout — `uv sync && uv run pytest tests/unit` passes with no workspace connection and no profile configured
+- [ ] T106 Verify SC-017 — deploy the bundle to an empty state and confirm a working system with no undocumented manual steps; correct `quickstart.md` wherever reality diverged from it
+- [ ] T107 [P] Write `README.md` at repo root covering purpose, the Free Edition substitutions from spec.md's table, deployment, and how the spikes resolved
+- [ ] T108 Reconcile `research.md` — record the actual outcomes of spikes S1 and S2 and any contingency taken in T050, so the document reflects what was built rather than what was planned
+- [ ] T109 Verify teardown safety: `databricks bundle destroy -t dev --profile DEFAULT` removes only this feature's assets and leaves the unrelated catalogs (`test`, `my_files`, `bridge_monitoring`, `claudecatalog`) and the pre-existing `agent-langgraph-agent-one` app untouched
+- [ ] T110 [P] Verify Constitution III (one writer per table): enumerate every table written by each pipeline and job and confirm no table has two producers, cross-checking against the ownership table in `contracts/pipeline-datasets.md`. Record the enumeration so a reviewer can re-check it without re-deriving it
+- [ ] T111 [P] Verify Constitution V (no real personal data — NON-NEGOTIABLE): confirm every row in `source.customer`, `source.policy`, `source.claim`, the telematics feed and both image sets originates from the setup job's generators; confirm no real dataset was substituted; and confirm the deployed app URL is not shared beyond the workspace owner. Record the result in `README.md`
+- [ ] T112 [P] Add a repository lint enforcing Constitution VI and the explicit-profile constraint — fail on any occurrence of `import dlt`, `@dlt.`, `LIVE.`, `APPLY CHANGES` or `dlt.apply_changes` under `src/`, and on any `databricks` CLI invocation in `src/`, `resources/` or the docs that omits `--profile`. Wire it into the unit test run so it executes offline with no workspace
+- [ ] T113 Run `superpowers:requesting-code-review` across the whole branch, then `superpowers:finishing-a-development-branch`
 
 ---
 
@@ -301,8 +305,8 @@ parallelism is the three ingestion paths in Phases 4–6.
 - **T006–T009** (all four unit test files) then **T010–T013** (all four lib modules) in Foundational — eight tasks across eight files
 - **Phases 4, 5 and 6 in their entirety** — three ingestion paths, three separate files, three separate bronze table sets
 - **T054–T057** — four silver tables in the same file but independent dataset definitions; parallelise only if the implementer can avoid edit conflicts, otherwise treat as sequential
-- **T090–T092**, then **T096, T097** in the app
-- **T104, T106** in polish
+- **T091–T093**, then **T097, T098** in the app
+- **T105, T107** in polish
 
 ---
 
@@ -358,9 +362,11 @@ Each of Phases 4 through 9 is independently demonstrable and can be stopped at:
 - **Phase 3 onward**: group by deliverable. Sequential tasks building one deliverable bundle into
   one dispatch; `[P]` tasks on separate files get their own. Each group: implementer → reviewer
   (spec compliance + code quality) → fix loop until clean
-- **Reviewer context**: source Global Constraints from spec.md's FRs and success criteria plus
-  plan.md's Technical Context. `.specify/memory/constitution.md` is an **unfilled template** — it
-  provides no gates (plan.md Constitution Check), so reviewers must not treat it as one
+- **Reviewer context**: source Global Constraints from spec.md's FRs and success criteria,
+  plan.md's Technical Context, **and `.specify/memory/constitution.md` v1.0.0**, which is ratified
+  and binding. Reviewers MUST gate on all 7 principles. Principles I (Test Discipline) and V (No
+  Real Personal Data) are NON-NEGOTIABLE — a violation of either fails the review outright and
+  MUST NOT be waived to unblock a task
 - **Test compliance**: tests are required for this feature. Reviewers verify the test files are
   present **in the diff** — not merely quoted in the implementer's report — and that RED/GREEN
   evidence is included
@@ -369,7 +375,7 @@ Each of Phases 4 through 9 is independently demonstrable and can be stopped at:
 
 ```
 Phase 3 (T017-T024) [US1]: complete (commits <base7>..<head7>, review clean)
-Phase 8 group C (T075-T078) [US6]: complete — extends lib/decision.py from Phase 2 (T013),
+Phase 8 group C (T076-T079) [US6]: complete — extends lib/decision.py from Phase 2 (T013),
   tests/unit/test_decision.py updated in place, full file re-run, review clean
 ```
 

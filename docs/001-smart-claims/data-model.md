@@ -73,7 +73,7 @@ recompute — see research R6).
 | `incident_type`, `collision_type` | STRING | |
 | `incident_severity` | STRING | customer's self-assessment. Domain below |
 | `incident_city`, `incident_state` | STRING | |
-| `total_claim_amount` | DECIMAL(12,2) | the amount claimed |
+| `total_claim_amount` | DECIMAL(12,2) | the amount claimed. **Some rows deliberately zero or negative**, to exercise FR-015 |
 | `num_vehicles_involved` | INT | |
 | `driver_license_issue_date` | STRING | text date, `dd/MM/yyyy` — a fourth format |
 
@@ -132,7 +132,7 @@ Cleaned and quality-enforced. Expectations are `expect_all_or_drop`.
 
 | Table | Expectations | Transformations |
 |---|---|---|
-| `silver.claim` | `claim_no IS NOT NULL`; `incident_hour BETWEEN 0 AND 23` | four date columns → DATE / TIMESTAMP, each with its own format; drop `_rescued_data` |
+| `silver.claim` | `claim_no IS NOT NULL`; `incident_hour BETWEEN 0 AND 23`; `total_claim_amount > 0` | four date columns → DATE / TIMESTAMP, each with its own format; drop `_rescued_data` |
 | `silver.policy` | `policy_no IS NOT NULL` | `premium → abs(premium)`; three date columns → DATE |
 | `silver.customer` | `customer_id IS NOT NULL` | `name` → `first_name` + `last_name`; `date_of_birth` → DATE; `address` normalised |
 | `silver.telematics` | `chassis_no IS NOT NULL`; `speed >= 0` | strings → DOUBLE / TIMESTAMP |
@@ -141,12 +141,21 @@ Cleaned and quality-enforced. Expectations are `expect_all_or_drop`.
 
 ## Gold layer
 
-- **`gold.telematics_agg`** (MV) — grouped by `chassis_no`: `max_speed`, `avg_speed`, `avg_latitude`,
-  `avg_longitude`, `reading_count`. `max_speed` is what the speed rule tests.
+- **`gold.telematics_agg`** (MV) — grouped by **`chassis_no` and `event_date`** (the date part of
+  `event_timestamp`): `max_speed`, `avg_speed`, `avg_latitude`, `avg_longitude`, `reading_count`.
+  `max_speed` is what the speed rule tests.
+
+  The date grain is required, not an optimisation. Grouping by `chassis_no` alone gives a vehicle
+  one speed figure across its whole history, so a claim would be judged against a speed recorded
+  on some unrelated day — the spec's "two accidents for the same vehicle" edge case.
 - **`gold.customer_claim_policy`** (MV) — `claim ⋈ policy ⋈ customer`. One row per claim.
 - **`gold.customer_claim_policy_telematics`** (MV) — the above, left-joined to `telematics_agg` on
-  `chassis_no`. **Left** join deliberately: a vehicle with no readings must still produce a claim
-  row, with the speed check recorded indeterminate rather than the claim vanishing.
+  **`chassis_no` AND `telematics_agg.event_date = claim.incident_date`**. **Left** join
+  deliberately: a vehicle with no readings for that date must still produce a claim row, with the
+  speed check recorded indeterminate rather than the claim vanishing.
+
+  Because `telematics_agg` holds at most one row per (vehicle, date), this join cannot fan out —
+  the claim count is preserved exactly, which is what SC-007 verifies.
 - **`gold.training_images_resized`** — 224×224 normalised training images.
 - **`gold.claim_images_predicted`** — accident images with `predicted_severity` and
   `prediction_confidence`.

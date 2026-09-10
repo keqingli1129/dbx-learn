@@ -24,7 +24,9 @@ code change, no redeploy.
 ## Evaluator contract
 
 **Input**: `gold.customer_claim_policy_telematics` left-joined to `gold.claim_images_predicted`
-on `claim_no`; plus all enabled rows of `gold.claims_rules`.
+on `claim_no`; plus all enabled rows of `gold.claims_rules`. The telematics columns in that view
+are scoped to the claim's incident date, so `max_speed` is the speed recorded on the day of the
+accident — not the vehicle's all-time maximum.
 
 **Output**: `gold.claim_insights` — one row per claim, one result column per rule name.
 
@@ -37,7 +39,7 @@ on `claim_no`; plus all enabled rows of `gold.claims_rules`.
 | `indeterminate` | `check_expr` evaluates to `NULL` — any operand is missing |
 
 The `NULL → indeterminate` mapping is the whole mechanism behind the spec's missing-data edge
-cases. A vehicle with no telematics yields `max_speed IS NULL`, so `max_speed <= 45` is `NULL`,
+cases. A vehicle with no telematics *on the incident date* yields `max_speed IS NULL`, so `max_speed <= 45` is `NULL`,
 so the speed check is indeterminate and the claim is routed to a human. Collapsing `NULL` to
 `false` would also route it to a human but would report it as speeding, which is wrong. Collapsing
 to `true` would approve it, which is worse.

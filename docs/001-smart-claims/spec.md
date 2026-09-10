@@ -345,8 +345,8 @@ portal end to end and confirm the decision matches what the rules engine would p
 #### Cleansing and business views
 
 - **FR-015**: System MUST reject records failing declared quality rules — claim number present,
-  incident hour within 0–23, policy number present, customer identifier present — excluding them
-  from the silver layer.
+  incident hour within 0–23, claimed amount strictly greater than zero, policy number present,
+  customer identifier present — excluding them from the silver layer.
 - **FR-016**: System MUST report, per quality rule, how many records passed and how many were
   rejected on each run.
 - **FR-017**: System MUST convert date-bearing text columns into true date values, correctly
@@ -355,10 +355,13 @@ portal end to end and confirm the decision matches what the rules engine would p
   last-name values, and normalise the customer address field.
 - **FR-019**: System MUST normalise policy premium values to their absolute magnitude.
 - **FR-020**: System MUST exclude ingestion-time quarantine columns from the silver layer.
-- **FR-021**: System MUST produce a gold view aggregating telematics per vehicle, including
-  maximum and average speed and mean position.
+- **FR-021**: System MUST produce a gold view aggregating telematics **per vehicle per day**,
+  including maximum and average speed and mean position. Aggregating per vehicle alone is
+  insufficient: a vehicle with two accidents on different dates would otherwise carry a single
+  speed figure, attributing one accident's speed to the other.
 - **FR-022**: System MUST produce a gold view joining each claim to its policy and its customer,
-  and a further view adding that vehicle's aggregated telematics.
+  and a further view adding that vehicle's aggregated telematics **for the date of the incident**.
+  The join MUST NOT increase or decrease the claim count.
 - **FR-023**: Gold views MUST refresh incrementally in response to upstream changes rather than
   recomputing in full.
 - **FR-024**: System MUST orchestrate ingestion and transformation as a single scheduled unit in
@@ -416,6 +419,8 @@ portal end to end and confirm the decision matches what the rules engine would p
 - **FR-044**: System MUST include automated tests covering telematics payload decoding, customer
   name and address normalisation, date-format coercion, and triage rule evaluation, executable
   without a live workspace connection.
+- **FR-045**: Transformation MUST fail loudly when a column it depends on is absent from its
+  source, rather than emitting rows with null values in its place.
 
 ### Key Entities
 
@@ -453,7 +458,12 @@ portal end to end and confirm the decision matches what the rules engine would p
 - **SC-006**: Deliberately invalid records injected into bronze are absent from silver, and the
   quality report attributes each rejection to the specific rule that caught it.
 - **SC-007**: The combined gold view returns one row per claim with its policy, customer and
-  telematics context, and no claim is lost or duplicated by the joins.
+  telematics context, and no claim is lost or duplicated by the joins. A vehicle with accidents on
+  two different dates yields a distinct speed figure for each.
+- **SC-007a**: A claim with a zero or negative claimed amount is absent from the silver layer and
+  attributed to the amount rule in the quality report.
+- **SC-007b**: Removing a depended-upon column from a source table causes transformation to fail
+  with an error naming the missing column, rather than producing null-filled rows.
 - **SC-008**: A registered classifier exists in the catalog carrying a production alias, traceable
   back to the experiment run that produced it.
 - **SC-009**: The classifier's per-class accuracy breakdown is produced and recorded, establishing
