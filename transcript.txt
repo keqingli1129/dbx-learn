@@ -1,0 +1,1193 @@
+Intro, Use Case & Demo
+Hello and welcome to this end to end datab bricks video course where we will
+be implementing a use case from scratch end to end leveraging all of the latest
+data bricks functionalities. In this course we will be using features such as lakeflow connect to ingest data from
+different data sources. We will also use lakeflow declarative pipelines to pre-process the data to build the
+medallion architecture on data bricks. We will also train a machine learning model using mosaici and mlflow and we
+will be also using lots of very new features such as datab bricks apps and lakebase. This course is intended to
+give you a good overview of what kind of datab bricks services and features do
+exist how do they work together and what should I use when to build an end toend
+solution. And all of this working on a real life use case working with real data and I will be also sharing all of
+the code and all of the resources shared in this video course so that you can go along yourself and also implement this
+in a free databicks workspace. Now next I will introduce the use case for this end to- end project for you and what we
+are trying to achieve and afterwards I will also show you an end-to-end demo of what we are going to build in this video
+course so that then afterwards you can decide if this is relevant for you or you would like to only skip to very
+specific parts. Now let's start with the use case. Now let me quickly introduce the use case we will be working on in
+this project. Imagine you're working for a car insurance company with data bricks. We want to solve two things.
+First, we want to bring all data of our company together. Meaning the customer
+information, the claims data, the policy data, the telemetics data that we capture in the cars. We want to create
+the single source of truth within data bricks so that we can run proper analytics on top and at the end take
+smarter business decisions. Second, we want to improve the claims process at our company. Currently, it's super
+manual. So whenever a customer submits this claim of a car crash, a human
+manually checks everything. We want to automate that within databicks. So we want to automatically verify several
+things such as what was the driver's speed, right? We got this from the telemetics information. Things like is
+the customer even eligible for this refund based on their policy and things like that. And then maybe also super
+interesting, does the car damage described by the customer, does it even make sense? So they upload a picture of
+the car crash whenever they submit a claim and then they self-classify basically the severity of this car
+crash. And what we want to do is we want to train a machine learning model based on several images of car crashes and we
+want to automatically classify their uploaded image and then we also want to
+check if the classification from our machine learning model matches what the customer has described. So to make this
+happen, we are building the lakehouse architecture on data bricks. We will ingest data from three key data sources.
+We will have a SQL server holding customer policy and claim information.
+We will also ingest data from a data stream. In this case, it's Kinesis data streams where the telemetics data is
+streamed into. And we will also ingest data directly from an object store. In
+this case from Amazon S3 where the actual images of the car crashes are uploaded for the ingestion as well as
+data quality checks and transformations. Later on we will use lake flow within data bricks to train the car damage
+classification machine learning model. We will use mosa and its ml flow capabilities within data bricks and then
+expose it via a model serving endpoint. We will build standard reporting dashboards for this insurance company
+using a SQL warehouse as well as AIBI dashboards within databicks. And we will
+also make the data available through a natural language interface using databicks genie. And finally, we will
+create a portal for the customers to submit their claims. And we will also
+have an admin view within this portal to review all of the claims. And for that,
+we are going to use a combination of lakebase to get this low latency access to our data as well as datab bricks apps
+to build the actual front end. Now before you decide to watch this whole tutorial which is probably 2 hours or
+more at the end I will give you an overview of what will be the output of this end to end project. So what we do
+here is we build an end toend solution within data bricks. We will build this architecture that you see right here. We
+will create a catalog called smart claims defaf with four different schemas inside. We have a landing schema which
+will be used to land our initial data in. Then we have the raw schema where we will create lots of different tables
+around claims and policies and customers that come from different data sources. We will ingest data from a SQL server
+for example using lake for connect and we will also stream telemetics data in for example. We will clean all of this
+up and also build those silver tables right here where we apply data quality checks and cleaning operations. And then
+we will also build gold level tables where we aggregate and join data together. And we will also train a
+machine learning model to classify the severity of images. For this we will use lakeflow declarative pipelines to write
+the actual transformations and I will provide you with all the code that you need to build this project end to end.
+And we will also make use of this new lakeflow pipelines editor that you see right here. After we ingest the data
+from all those different data sources and process it within data bricks and train the machine learning model, we
+will make it ready for consumption for different kind of users. So we will build this dashboard here together to
+have a report on the analyzed data. We will also build a genie space to analyze
+the data in natural language. And maybe one of the highlights, we will also build a datab bricks app as you can see
+right here, which will serve as the entry point for users who wants to
+submit their claims. So they can basically upload here a claim image,
+right? They will be able to provide some more details like their policy number, their location as well as the amount
+they claim. Here we will provide an accident date and they provide also a selfassessed
+severity which will then be compared against what our machine learning model predicted. And we will select a
+collision type right here. How many vehicles were involved? And then they can submit the claim. And all of this
+gets processed. And there you go. You see for this specific claim the outcome was it's all super fine. the image that
+they uploaded matches the severity that our machine learning model predicted and also lots of other stuff that we check
+here out of the box is fine. So we will release the fund for the customer in 3
+to five business days. If any of those checks would have failed then we would see this message here that further
+investigation is needed. Investigation is also something built into this databicks app. So, if we click into the
+admin mode right here, you will see that we will also build this admin panel for
+internal employees to check all of the claims that were submitted. You see an
+overview of how they were classified as well as the total amount that was claimed. You will be able to filter here
+for the different severity types. And we have an analysis page where you can then
+see for each of the different claims if they pass the different checks. You will
+see all the claim details and you will see also all the customer information as well as the image that they uploaded and
+all of this is also powered by lakebase. All right, I hope this made you excited about project that we are about to
+build. And now we will start by ingesting the very first data source.
+Ingesting Streaming Data
+All right, let's switch into data bricks and get started here. So before we dive into the first ingestion pipeline, let's
+have a quick look how our catalog is set up, how our unity catalog is structured here. So we have one catalog called
+smart claims dev. This will be the main catalog we will be working with. And inside there we have four key schemas.
+The first one being the landing schema where initially our files that are not
+yet converted into delta format land in our object store. Right? And then we
+have the typical three layers of a medallion architecture. We first have our brass schema here where we will
+transform our data in delta but leave it as is. In the silver one, we will do our
+first cleaning operations. We will do some standardizations things like that.
+Some data quality checks and then in the actual gold layer we will have our aggregated data our joint data ready to
+consume by for example NBI tool. Cool. For the first data source we would like
+to ingest streaming data. In our use case we have those teleatic sensors in
+the different cars and they stream data into Kinesis data streams. Kinesis data
+streams is a managed service by AWS. It's kind of similar to things like
+Kafka where you can stream messages in and then within data wigs to ingest it
+into the Unity catalog we need to read from the stream and create delta tables
+out of that. For this we will create a new lakeflow declarative pipeline
+formerly known as DT. And all we have to do is click on new ETL pipeline. Provide
+a name here. Let's call it Kinesis ingestion. Let's provide the default catalog and
+schema. We can now read and write from different uh cataloges and schemas, but this will be our default one right here.
+And we select smart claims defaf and browse as we would like to directly
+transform the data into delta format and store it in a brows layer here. And here we select start with an empty file and
+we select Python as our language in this case. We could also do that with SQL,
+but for now, let's stick with Python. And what you see here now is the new
+Lakeflow declarative pipeline UI. It's kind of an IDE specifically designed to
+work with LakeFlow declarative pipelines. It's currently in beta and it's it's super nice. You will see in a
+second how the end to end workflow looks like. Here on the left side, we have an overview about all of our files in this
+project. So let's maybe rename this one to Kinesis simple as we will start with
+an simple example here and we're good to go. On the right hand side you will see
+later on the graph being built automatically and visualized and on the
+bottom we will later see the actual tables created by this pipeline here and also see some sample values to make sure
+we are on the right track. Now what we want to do is we want to read from the Kinesis stream. So first of all I'm
+importing some libraries that we will need later on and then we are defining
+some Kinesis specific configuration parameters here. We for example provide
+the stream name. So this is the Kinesis data stream we would like to read from. It's located in the US East1 region and
+we want to read it from the earliest position. So we want to read the whole stream right from the beginning. And
+then this part here is also super important. So we need to authenticate to
+our Kinesis data stream from our databicks cluster. And there are several
+ways to do so. But what we would like to avoid is somewhere storing hard-coded
+secret values. We also don't want to mess up with some tokens that we need to maintain that we need to rotate. And for
+that the recommended way to do so is going by unity catalog service
+credentials. So you see here we specify the service credential called Kinesis
+service credential. And this is something I have created already. Let's
+have a look in the unity catalog for that. So on the unity catalog if we go
+to credentials right here you will see exactly this Kinesis service credential.
+Right. So if you would like to create it, it's it's super straightforward. You click here on create credential. It's
+not a storage credential. It's a service credential right here, which is supposed to be used to access several cloud
+services uh other than than storage accounts, right? All you have to do is provide a name as well as an AM role.
+And this AM role is basically allowing us to access the Kinesis data stream. We
+don't need to maintain any secrets or rotate any tokens or anything like that and it's all governed by the Unity
+catalog which is super helpful. I don't want to show you all of the details how I how I set this up. I will put the
+documentation in the description so you can have a look how to create in general those service credentials. And just to
+quickly maybe um see how it how it looks within AWS. So I created this role here
+called Kinesis service credential role. I gave it the proper permissions to read
+from the stream to list the shards and and so on and so forth. It's all documented what you need here. And then
+I also provided this trust relationship needed to our external ID which is
+basically the connection to our databicks account. Now as we are already in AWS let's also look into the Kinesis
+data stream that we are going to use. So there is only one over here and this is exactly this teleatics stream in US East
+that we will read from now inside databicks. All right. Now we have the configuration set up. We can
+authenticate to our stream through this service credential right here. Now let's
+look into the first implementation of our let's say most simple code to
+connect to the stream to read from it and to write into a delta table. Here I provided some lakeflow declarative
+pipeline code for that. I'm calling the table right here teleatics test. I'm
+giving it some additional metadata which you will also see later on in the Unity catalog. I'm describing that this is a
+parsed Kinesis data stream holding telemetics data. In this case, it's not parsed yet, but we will change that
+later on. And it's really the most minimal implementation how to read from
+the stream and write into databicks. All we are saying here is we are reading a
+stream from the format Kinesis and we provide as the options all the Kinesis
+configurations that we have provided here at the top. And now we're already good to go. So this pipeline here is
+configured as a serverless lakeflow declarative pipeline. We could add some additional configurations but I think
+for the first test it's good to go. We click on run pipeline and see what happens. And there we go. Our serverless
+cluster is up and running. We are reading from the stream as you see right
+here. And we have written 40 different records into the target table. So this
+is the beauty of this new DT UI over here or the new lakeflow declarative
+pipeline UI over here. You see right away first of all the graph. You can see
+it alongside the code that you implement and you also see the actual outputs here. So you see this teleatics test
+table got created and we can even click into it and see the sample data here. So
+we see what was actually written into the delta table without the need to yeah
+open another tab go to unity catalog click on the sample values and and so on and so forth. Now you see we have
+different kind of columns. We have some metadata sent over from the Kinesis data
+stream and then we see the actual data column here but it's still super cryptic and the reason for that is that this is
+only the bite data that we now ingested. So we are reading the actual bytes from
+the stream and as we have not performed any kind of parsing or any kind of
+implementation logic to make this proper readable data we see only the bytes
+here. So this is what we're going to change next. We are creating a new file right here and we call it kinesis
+par.
+The configuration we can just copy over here and then we will make some more
+adjustments to actually also parse the records and put it into a proper structure. So first of all we want we
+don't want to look into the proper data formats. We just want to make everything a string. For this, we will create this
+map type right here and put it into a variable called payload schema.
+And now I am ingesting here a bunch of code. So it's a bit more than our previous example, but this will help us
+to actually parse our data set right here. So we are again creating a
+lakeflow declarative pipeline table. This time we call it telematics advanced
+or let's just call it telematics. We again provide some comments table properties and we also again just load
+the raw stream. But now you see we are making some more adjustments to actually parse it. The most important thing here
+is we are casting it right here to string. So basically we are making the
+bytes that we have seen earlier right here readable in a proper string format.
+And we create this new column called the raw JSON. Right here we are again selecting all of the additional metadata
+from the Kinesis data stream. And we create a new column called decoded data
+where we actually even take it a step further. So we are not just pasting all
+the data that we converted right here into one column. No, we are actually
+decoding it first of all by using this from JSON function and then we are
+creating proper columns to our target table. First of all, we will have one
+column called stream metadata where we put all of the Kinesis specific stuff. But then more importantly here we are
+having the actual data like the speed which will be super important later on
+in our analysis. the latitude, the longitude, the event timestamp, the chases number. So the actual data
+basically will be put into proper columns now in our target table. So if
+we execute this one right here, we will see that the output will now look way
+better for us, you see we're getting a new table right here. This time called telematics. Again, it's reading those 40
+records that are already sitting inside the stream. And now if we click into the table we see okay now we properly have
+our columns right we have our latitude we have our longitude we have the speed
+and we basically parsed everything we transformed it from the bite format into
+proper strings and then we even further separated it from this big JSON chunk
+into different kind of columns in our target table. Now you already saw whenever I'm executing this pipeline
+here, it's actually reading from the stream and retrieving all the new data
+that was inserted there compared to the last run. And this is also the beauty of
+the lakeflow declarative pipeline. So we did not have to specify any checkpointing location and stuff like
+that. All of that is abstracted away for us. And we also see streaming does not
+necessarily have to be a 247 running pipeline. It can also be
+executed in a batch mode like like we're doing it right now. Right? We could also change this. So we could go into the
+configuration and we can say okay it's not a triggered pipeline anymore but
+it's like a continuous pipeline. And then this would actually run in streaming mode and all the time reading
+from our streaming source and ingesting it in real time into our target tables. So let's try this out as well. Let's
+make this a streaming pipeline. And then let me under the hood send a few records
+in real time into the stream by executing a script I have.
+There we go. Scripts started. And you see it's now writing records actually.
+So this is basically my script sending records every uh I think 3 seconds or
+something like that. And you see the records being updated here in real time. And you can even click on the actual
+declarative pipeline and also have this UI if you're more familiar to to that one and see also here for the different
+streams. So in this case we are now continuously running the simple stream right here where we not pausing the
+records as well as the more advanced stream and both of them ingest data in
+real time as this is now a continuously running pipeline. Now I stopped it.
+Let's quickly check in the Unity catalog how things look like. We are looking
+into the brows and then we see here those two tables. We can delete the second one as this was only for
+demonstration purposes. But then for the actual telematics table, we have now
+ingested our streaming data from our Kinesis data source. We see it's in proper columns right here. We can uh
+look in the sample values. And here we see again what we also saw in the lakeflow declarative pipelines UI. Cool.
+Let's now continue with the other data sources.
+Ingesting SQL Server
+The first step in every unified data platform is ingesting data from the different source systems. One of the key
+data sources is often a relational database such as a posgress or a SQL
+server where you need to pull data from and load it into your target analytical system such as datab bricks. Due to
+performance reasons and maybe real-time requirements, you don't want to load the full snapshot of the database multiple
+times per day. Instead, you often would want to incrementally ingest only the changes from the source database into
+the target system. In the past, achieving this often meant stitching together multiple different systems such
+as DSium, Kafka, and so on. But in this hands-on video, I will show you how you
+can do that very simply using datab bricks and lakeflow connect. We will build a pipeline in data bicks to ingest
+all the inserts, updates, and deletes from a SQL server into databicks. First
+by doing all the needed configurations on the database site itself and then inside datab bricks we will create this
+pipeline to incrementally ingest this change data feed and stream it into a
+delta table. Now let's jump right into data bricks and get started. All right now we are in data bricks and we want to
+ingest the data. Right. Currently our catalog and schema setup looks like this. We have this smart claims defaf
+catalog which is our main catalog and we want to ingest the data in the SQL
+server into this browse schema right here. Currently we have only one table here. This is from the last video. But
+now we want to ingest three more tables which currently sit in the SQL server.
+This is the claims data, the customer data and the policy data. For this, all
+we have to do is go over here into the data ingestion tab and then at the top
+you see those datab bricks native connectors. And today we are going to use the SQL server one right here. If
+you don't see it in your account, you need to enable it in the preview settings of the workspace and then you
+can go ahead and click into it. I would say the setup is very straightforward. We need two components of this ingestion
+pipeline. First of all, we need an ingestion gateway. This is what we are giving a name for right here. Let's call
+this demo ingestion gateway. There we go. Then we select here the
+location for the staging ingestion data. So what is this all about? Right. So
+this ingestion gateway, this is the first component of LakeFlow connect. And this will be the actual compute that is
+used to connect to the transaction log to the change data feed from your source
+database in this case SQL server and it will read from there all the insert
+update and delete operations performed on the database and it will write it into a unity catalog volume and this
+volume location is what we specify here. So if we select our catalog right here
+the smart claims dev for the schema we would select the the landing schema right here. This is the first part of
+lakeflow connect. The next part is what you see here. This is the ingestion pipeline and this is what will actually
+do the upsert operations into our target bronze table. Right? So this is a
+separate pipeline. We have the ingestion gateway reading in all the transaction logs, all the inserts, updates, deletes,
+pushing it into a volume and then we can basically schedule this ingestion pipeline which will read from this
+volume and apply all the inserts, updates, deletes into a target delta table. So let's call this demo ingestion
+pipeline. And here we now need to select a connection as you can see here. So
+this is basically a unity catalog object that we created beforehand where we
+specify the host right where we want to connect to as well as the credentials to connect into the target system. Here we
+already have this one. If we click into it we will be routed to the Unity catalog and we will see that we created
+here this connection which is a SQL server connection. We provided the URL, the host, the port to connect to as well
+as a username and a password to authenticate to that. Right? All right. So now before we create the pipeline and
+actually continue, there are a couple of things that needs to happen on the source database site. So we need to
+enable a few configurations. This is typically done by a database administrator to make sure first of all
+this transaction log is even written by the database and to make sure we can read from it. For this, let's quickly
+have a look how our database looks like and what we need to enable exactly. All right. Now, we are in data grip. Data
+grip is kind of a database IDE. And here we will have a look on our data in the
+database as well as the configurations that we need to make. First of all, I mentioned we have three different tables
+that we want to ingest. This is also what you see here on the left hand side. So I connected to my SQL server which is
+hosted on RDS and we see the free tables here and if we query them we can also
+have a look how they how they look like. For the customer one you see we have like the customer ID a date of birth and
+so on and so forth. The policy also holds some kind of data related to the
+different policies of the customers and then the claim data holds the actual information about the different claims
+performed by the customers. Now to ingest this data with lakeflow connect we need to do a couple of things as I
+mentioned and this is what we're going to do next. First thing we have to do and by the way you find all of this also
+in the datab bricks documentation is to enable the change tracking on the
+database itself as well as on all of the tables. For this we can execute this command. We alter the table claims defaf
+and we set the change tracking on. In this case we have already done this in advance. And then for each of the
+different tables we are altering them and enable change tracking for claim as
+well as for the customer table right here. This is the first step. After we
+have enabled the change tracking we need to enable CDC as well again on the
+database as well as on each of the different tables. For an RDS SQL server database the syntax looks like that. So
+we execute this command for the database and then for each of the tables again we need to separately enable CDC on the
+table itself. So we do this for the policy for the claim and also for the
+customer table. This is already almost it. There is one more step. There is a script provided in the database
+documentation to set up the DDL capture and the schema evolution on the
+database. So for this all we have to do is to click on the database click on SQL
+scripts and then we run a SQL script and here we select the one that we have
+downloaded from the datab bricks documentation. All right and now we're good to go. So we can switch back to
+datab bricks and here we can continue with the setup of our ingestion
+pipeline. Right. So we specified the catalog here and we specified the connection. We can click on create
+pipeline and continue. And now what is going to happen? So this will take typically a couple of minutes because in
+the background now there is a VM set up for the ingestion gateway. So this is
+the one that will be used now to read from this transaction log from the database from the SQL server using this
+connection that we have provided and we'll write it into a volume which will
+then be picked up by the ingestion pipeline afterwards. Right? So here we need to wait a couple of minutes. This
+is currently not available yet in serverless. So this will be always a classic compute VM. You can also check
+it in your underlying AWS or Azure account. So let's wait for that and then we can proceed with the next steps.
+Cool. After a few minutes you will see something like this. So now we are connected to our SQL server through the
+ingestion gateway. And we basically see an overview of our database of the schema and of the different tables that
+we have. And now we can select which tables we actually want to ingest. In this case we want to ingest the claim
+customer as well as the policy. So we select all of them. And then we click on next right here. Now we have to select
+where to put basically the destination tables. So inside data we want to put it into this browse schema right here. So
+we select save and continue. We see the ingestion pipeline was saved. And now
+the pipeline configuration is validated. There we go. We are on the very last step. Here we can provide some
+additional configurations for this ingestion pipeline itself. So here for example we can add a schedule so that
+the ingestion pipeline is executed every hour for example. So again we have those
+two parts right we have the ingestion gateway which is running all the time and getting the changes from the source
+system and putting it into a volume in data bricks and then we have the ingestion pipeline which is then using
+the inserts updates deletes from the volume and inserting it into a target table in our browse layer and this is
+basically the ingestion pipeline configuration here we can click on save and run pipeline and then we get
+directly moved into the databicks jobs and pipelines UI. And here the job is
+executed. All right. And there we go. The pipeline is set up as well. And now
+it basically starts to ingest the data into the three different target tables.
+You see it's doing this in parallel for the claim, customer, and policy table.
+And that is already it. So all three tables have been ingested. So you see there were 13,000 records for the claim
+table upserted for the customer. it were around 7,000 and 12,000 for the policy.
+Now let's check if this is actually true. So we go to the catalog and we click on our smart claims defaf catalog
+and first of all inside the landing one we should see something exactly here. We see this volume which was created to
+initially by the ingestion gateway insert a snapshot in this case of the source database. So as this was our very
+first run, it did a snapshot right of the source database. And now for the next executions, it will only track and
+only insert the recent changes, the inserts, updates, deletes. Right now we see next to the telematics one that we
+already had before, we see the claim, customer, and policy tables. They're all streaming tables because under the hood,
+the ingestion gateway as well as the ingestion pipeline is running a lakeflow declarative pipeline, formerly known as
+DT. Therefore, it also creates streaming tables and we see the schema here
+matches the one that we had in the source database. And if we click into the sample data, we can actually see
+data right here, right? So, it all worked. So, what we can do now to check if if also the incremental updates work
+because currently it just basically inserted the snapshot, right? But now we are interested in the incremental
+changes that happened during the day. So what we can do is we can switch back to our data grip and here we can for each
+of the different tables we can basically execute an insert and update and delete
+and see if it's propagated properly to our target delta tables. Now let's do this right. So we will insert to the
+policy. We will insert this record right here. There we go. One row affected.
+Then we will update from the claim table one of the claims to change the incident
+severity that is set there. So we execute this one and as a last step we
+will also delete one record from the customer table. So let's delete this one
+right here. Now we also see one row affected. Now let's switch into datab bricks and look into how to ingest now
+those incremental changes into datab bricks. in datab bricks. All we have to do now is to execute this ingestion
+pipeline. Before we do that, let's quickly check here. I prepared a few SQL statements to make sure that we actually
+apply the changes. Right? So, if we query the customer, this is the one that we just deleted in the source system. We
+see here it still exists. For the claim, we see that if we query that the
+severity type is set to total loss. We changed that on the source database. And
+for the policy, we ingested the new record with this policy number. But here in databicks, it does not exist yet,
+right? Because we have not yet applied all the changes from the source system. Now, when we execute this pipeline here,
+we can do this by just starting this pipeline right here. And now it will basically update all the tables based on
+the most recent changes in our source database. Perfect. Here we already basically see that it worked. We see
+three changes were recognized. For the claims one, we have an upsert. For the customer one, we see a delete. And for
+the policy, we also see an upsert. Now, if we re-execute our three statements
+right here. Now, if we start maybe with the policy one, we see this record was
+successfully inserted. So, it was not there before. For the claims table, we
+change the severity type here. So if we execute this, we see here the new
+incident severity that was set to minor damage. And for the customer that we deleted, we should now see no records
+here. And if we execute this exactly, we see no records returned. So we
+successfully basically executed all the changes on the source system. Awesome.
+That is already it. We have implemented successfully an incremental pipeline to
+track first of all all the inserts, updates, deletes that happen on the source system. I've provided you all the
+configurations that you have to do on the source database in this case the SQL server. We have created this ingestion
+gateway as part of the lakeflow connect to read all those changes and to put it into a volume in datab bricks and then
+also this lakeflow connect ingestion pipeline will read all those changes and
+apply it whenever we execute it to the target systems. So this way now we have a fully functional higherformant change
+data capture pipeline and we have set all of this up within minutes using only
+lakeflow connect within data bricks and I think this is a super powerful solution right here.
+Ingesting Object Storage with Autoloader
+One of the most common data sources in lakehouses is actually a file sitting in
+an object store. someone pushes their CSV files or JSON files or just images
+into your S3 bucket or Azure data lake and now you have to figure out how do I
+ingest this data incrementally into my data platform such as datab bricks and transform it into a proper lakehouse
+format such as delta or iceberg. If you implement this you probably have the following questions. How do I figure out
+which files have I already processed? Do I need to maintain a separate metadata
+database only for that purpose? Also, how do I make really sure I read the files only once? And what do I do with
+schema changes? And also, last but not least, how do I archive or delete the
+files that I have already processed so that I don't have to store the files twice? The answer for that in data
+bricks is autoloader. This video will show you hands-on how you can set up autoloader within data bricks together
+with lakeflow declarative pipelines to build this incremental file ingestion pipeline and then also afterwards
+archive the already processed data using the new autoloader functionality called clean source. Now let's get started and
+let's dive right into databicks. And here we are within data bricks.
+Before we dive into the actual code to load the data from S3, let's check our catalog structure again. So here maybe
+to recap if you have not seen the previous two videos. We have a catalog
+called smart claims defaf. And then inside there we have four key schemas. We have the landing schema, the bronze
+one, the silver and the gold one. For today the main focus will be on the landing and on the bronze one. Now let's
+look into the landing volume right here. So you will see that we have two new volumes here. One is called claims and
+the other one is called training images. Those two volumes hold all of the data that we need for this video. So we are
+planning to create three new tables. One for the training images. So those will
+be images of car crashes that we're going to use to train our machine learning model later on to classify the
+severity. And then we have the claims volume. And here we have a couple of folders. First of all, we have again
+images. These are the actual images of the accidents and uploaded by our
+customers for specific claims. And then we have also within this claims volume
+additional metadata describing what these images are about. So we have like this CSV file having more information
+what kind of image ID it actually is, what kind of claim number this uploaded
+image refers to. And then you will see in this folder structure we also have this archive folder here. And this will
+be the one that we will use later in this video to move the already processed files into. All right, this is all you
+have to know for now. And we want to use this data right here. So this volume is just pointing to an S3 bucket, right? So
+if we click into the details tab, we see okay, this is pointing to this storage location and we want to read this data
+incrementally and then we want to create browse tables out of this. You see the
+ones from the last video and here we will create three new tables. Next for
+this what we do is we create a new ETL pipeline right here and this will be again um a lakeflow declarative
+pipeline. Let's call it inest object storage and we select our catalog as
+well as the schema and in this case the browse schema because we want to write into this one and then we create an
+empty file for now. And there we go. So now we are again in the new lakeflow declarative pipeline UI that you see
+that you can enable in the previous settings. And now we want to create those three tables that I just described
+those three bronze tables. And for each of the tables we will explore different autoloader functionalities. And we start
+with the most basic example. Now we zoom in a bit and then we start by specifying
+some metadata about our target table. So we start with the training images. We add a comment here as well. And then we
+also add this table property describing it's a browse level table. And now the implementation of autoloader is actually
+the most minimal implementation that you can have. So all we do here is we are
+reading the stream and putting as a format cloud files right here. And this
+basically means that we are going to use autoloader under the hood to incrementally read the files from the
+specified location. We do one more configuration. We set the format to binary file as we are dealing with image
+data right here. And then we specify the volume path and this will be the one that we have just seen where we have all
+of our image data that we will use later on for training purposes. We don't do any fancy stuff here like archiving
+files or handling schema evolution. This we will look into next as well. But for now, let's just execute the most minimal
+configuration right here. Typically, if you work with autoloader outside of the declarative pipelines, you would need to
+make some additional configurations such as setting the checkpoint location, the schema location. Here it's all handled
+for you. So really, all you have to do is specifying where you want to read
+from and that you want to read in the format cloud files and that's it. There we go. The cluster is up and running.
+The pipeline is being executed and we are reading from our object store and we
+will probably see here a few written records. There we go. We have 56 written
+records right here. So this means we have now successfully created this table and have read the data from the object
+store. Now, if we would add more data into this S3 bucket and re-execute this
+pipeline, it would automatically figure out what has already been read and only
+read and ingest the new files right there. We will see this for the next table in action. But for now, let's also
+quickly check if the table was actually created in the Unity catalog. For this, we will jump over here and have a look
+into our browse. And there we go. We see the training images. We see that we have
+the path right here. We have the content which is the actual image representation
+in binary format and also some additional metadata right here. Cool. That was a very simple example. Now
+let's look into some more advanced autoload functionalities as well. First of all for the next table let's look
+into schema evolution. Right. So we ingest now uh the metadata of the images
+and we will look into how we can handle schema evolution for for example CSV
+files. For this first of all let us paste some code here and this is really exactly the same code that we have seen
+earlier just pointing to another subfolder in our volume and creating
+another table. So this will be the claims images metadata and in this case it's CSV files. Right. So for now it's
+exactly the same what we have seen right now. And here I want to elaborate a bit
+more on the schema evolution. So one parameter that you do not see here because it's set by default is this one
+right here. So cloud files schema evolution is set by default to add new
+columns. So this means if I run this pipeline to ingest the data and then on
+the next run I have added for the new records another column right it will add
+it automatically also to our delta table schema. So now let's try this out right
+we will run this pipeline right here and we will create this claims images meta
+table and for now we keep it with the default with like the schema evolution
+mode set to the add new columns right here and there we go this one is also
+being created and uh instead of going into the unity catalog we can also just see some sample
+data right here so there we go we have this table successfully inserted right
+here. And now what we want to do is we want to add some more data into this
+free bucket with a new column. And this data will look like this here but with the difference that it will have another
+column and we will see how the behavior is with this default configuration first
+of all and then we will make some changes to that. Now to do that I will do the following. I will go to the Unity catalog, go into the claims metadata and
+then right here I will upload some data. So I can do this right from data bricks instead of going through the AWS
+console. In there I will upload a record right here. We will also have a look
+into it in a second. So if we open it we see it's just one record. It looks
+exactly the same like the previous ones with the exception that here we have this new column right and we specify it
+as a value new column value one. Now let's get back to our pipeline and here we just re-execute this one and see what
+happens. So now we see for the first time we see the actual autoloader functionality as it knows now okay the
+first file we have already processed and ingested and now it will only ingest basically the new file. So for written
+records we should see just one right here as our new file has only one
+record. Right? There we go. This is exactly what we see right here. And now if we have a look at the data again we
+will see that we have a new column here that is set to null for most of the
+records. But there should be one record that has a value here. The one that we just uploaded into the S3 bucket. Now
+let's check this as well. For this, we just open the SQL editor and then we just query for this record that we have
+ingested. And there we go. We see it actually has a value right here. And all the other records from our initial load,
+they don't have this column here specified. And this is exactly the default behavior. Now, if we want to
+change this, right, we can do the following. So here instead of specifying add new columns for this schema
+evolution mode we will put in rescue right here. And now we will see how this
+behaves with a new file being uploaded. For this again same procedure we go into
+our volume and we upload yet another file right here. Let's see how it looks this time. It's again just one new
+record but in this case it does not only have this new column here, new column
+one. It has even one additional column, new column two that was not there before, right? Not even in the second
+file that we uploaded that already had this new column one. This new column 2 is something completely new. Now with
+the previous behavior, it would again just put this new column into the actual schema and then it will put lots of null
+values for all the records except this one that we just inserted. But now as we changed the configuration to put the
+schema evulation mode to rescue it will behave a bit differently. So now if we re-execute this one again we have one
+record written. So this is the new one coming from our latest file. And now if we click into the data we see here that
+we do not have this new column 2. Instead what happened? It will use now
+this rescued data column right here to put in all the values that are different from this other schema that we have
+right here. Now to make this more clear, we go again back to our SQL editor. And
+there we query now for this new record and you will see this one has the new
+column two this time in the rescued data right here. Right? And any new column
+that we will add will land now in this rescued data one right here instead of adding actual new columns as we have
+seen with the default previous behavior. And this is how you can control basically schema changes using
+autoloader. All right. Now if we check the unity catalog we have not only the training images but also the claims
+images metadata successfully ingested right here. And now as a last step the accident images are missing. And for
+this we want to explore this new autoloader functionality to automatically either archive or delete
+files once they have been processed. And for this we see in the volumes if we click into the claims one again we see
+we have already created this archive subfolder right here which is currently
+empty. This is where we would like to move our already processed data on automatically. Why would we do that? So
+this could be either a place where we temporarily keep all the files and then later on we delete them or this could be
+just a place where we archive everything and this could be another storage tier that is cheaper on the cloud level.
+Right? In this case we will not use the declarative pipelines anymore but we will use plain pispar code for this.
+Let's switch to a notebook and let's see how it looks like. So first of all I will paste bunch of paths and
+configurations and stuff. So I have here different kind of paths. I have the source path. I have the archive path.
+And you will also see we have this metadata path right here. Because currently we were working with
+declarative pipelines. Lots of things were abstracted away from us that are typically needed to configure in this
+autoloader pipelines. If you were working with the normal imperative Spark code, you will see this in a second. So
+now what I would like to do is I create a new variable right here where I paste
+all the new configurations that we now need to achieve this archiving
+mechanism. For this we use the new cloud files functionality called clean source
+and it has three different parameters that we need to set here. First of all,
+the clean source type right here, we set it to move, right? Because after the
+data has been processed, we want to move it to another destination. The other alternative here would be to set this to
+delete. So after files have been processed, you would like to delete them. In this case, we would like to
+move them. Then for the next parameter, we specify after which time we would
+like to move them. In this case, we set it to 1 minute. So 1 minute after we process the files, we would like to move
+them to the destination that we specified here, the move destination. And this will be the archive path right
+here. And this is what we just have seen in the volumes. Basically the subfolder called archive. And then we paste a
+bunch of more code here to do the read and to write it out into a target table.
+It looks very similar to the declarative pipeline code that we have seen. We are also pasting here those archive
+configurations that we have just set. And for now we will do it in um
+available now true mode meaning we execute this on a batch right it will
+not run in a continuously running streaming pipeline. So now I will just execute it right here and we will see
+what happens. All right the pipeline did just run now. We see it was successfully
+executed. And now if we check the Unity catalog and go to the browse schema and then refresh it, we should see right
+here this new claim images table that we have now. Now if we check the claims
+volume right here and then we go into the archive, we see our files have actually been moved right here. Right?
+So it all worked successfully. Sometimes you need to re-execute this pipeline because here the retention duration is
+set to 1 minute. Right? And if this is taking less than a minute, then it would probably not move the files and you
+would need to re-execute this whole pipeline. But in like a production scenario where you anyways probably have
+a scheduled pipeline that runs maybe several times per day, then in one of
+the runs, it would definitely pick up this task and move the files to the destination target. All right, and that
+was already it. So in this video you saw how you can use autoloadader to very efficiently load incremental data from
+an object store and also do things like archiving your process data
+automatically. Now in the last few videos we have ingested data from a streaming source from a relational
+database and now also from an object store and then in the next video we will look into how to process this data how
+to apply data quality checks and how to orchestrate the whole pipeline.
+SIlver and Gold Transformations
+Data transformations or ETL pipelines are one of the core capabilities of
+every data and AI platform. For big data in particular, Apache Spark is the go-to
+framework for distributed data processing and the databicks founders are actually the original creators of
+Apache Spark. Therefore, obviously, databicks is a great platform to run your Spark code to transform your data
+across the Medallion architecture. Now to make data processing pipelines easier, more reliable and also more
+performant, databicks a few years ago introduced an ETL framework called Delta
+Life Tables which has recently been opensourced as part of the Apache Spark
+project and it also got a rename to LakeFlow declarative pipelines or Spark declarative pipelines as well as some
+major updates within the framework itself. In my opinion, declarative pipelines offer the following major
+benefits. First of all, they unify batch and stream processing as they provide
+this declarative interface to write your pipelines. So you can easily switch
+batch and streaming whenever your requirements change. Additionally, you get data quality functionalities right
+built into the framework and declarative pipelines are really built for incremental processing. So it becomes
+super easy to write those pipelines where you always only propagate your incremental new data changes throughout
+your whole pipeline. And you can also do things like change data capture and slowly changing dimensions with just a
+few lines of code. After you've implemented your data processing pipeline, you probably want to orchestrate everything. And for this
+databris offers lakeflow jobs which was previously known as workflows to orchestrate your whole pipeline to put a
+schedule on top of it to define triggers job parameters and much more. In this video we will use lakeflow declarative
+pipelines to build our silver and gold tables by implementing pipelines to
+clean the data to apply some data quality checks and then to join it to make it ready for consumption by
+downstream applications. Now let's jump right into databicks and get started. All right, let's go. Here we are within
+databicks. And as always, let's quickly check our catalog structure. We are
+still operating in the smart claims deaf catalog if you have watched the previous videos. And today we will be mainly
+focusing on the silver and the gold schema as we are building the cleaning transformations as well as the
+aggregations. So let's quickly check maybe again what we have already here within the landing schema. We have all
+the volumes, right? So here we have the volumes that were created by our ingestion gateway to ingest the SQL
+server data as well as the volumes that we created to upload the images. And
+then in browse we created all those different tables for the claims for the claim images for the customers policy
+teleatics and all of that was ingested in the previous parts. And now we would
+like to transform this data. We would like to clean it and we want to put it
+into a structure so that we can consume it by downstream applications and for this we will clean the tables and put it
+into the silver one which is currently empty and then we will also have this gold schema where we will put the
+aggregated data into. Now for this we would need to write some code and for that we will again create some lakeflow
+declarative pipelines. So we click on new ETL pipeline right here. This time
+we call it transformations and then we select our catalog and the
+default schema this time should be maybe the the silver one and we will again use
+the new lakeflow pipelines editor and for now let's start with an empty file.
+Now let's give this some structures. Let's create some separate files for the different stages. We will create two new
+files for bronze to silver and for silver to gold. Now let's start with the actual implementation of the browse to
+silver pipelines. For this first of all we will import some functions as well as
+defining our catalog brows schema and silver schema as we will refer to this
+several times within this file. By the way, this could be also later on abstracted away into pipeline
+configurations. But for now, let's just hardcode it uh right into here. And now
+we can start cleaning our data. And let's start maybe with the claims data
+set. To do that, let's maybe quickly first open a new tab to have a quick look into the data set. Right? So we
+query from the browse claim table and then we see how it currently looks like. It is already in a quite clean state.
+But what we see here for example, we have lots of dates inside here like the license issue date and they are actually
+in string format. So we would like to convert them into date format. And this is one of the typical cleaning
+operations that you do from bronze to silver. And then we would also like to do some data quality checks to uh make
+sure that very important columns such as the claim number, for example, they are
+not zero, right? They have a specific value. And then we could also apply some
+other checks on the other columns using the builtin data quality functionalities
+within the declarative pipelines. So let's do that. So we paste here our initial code. This is just defining
+again the name of the table. In this case we will put it into the silver schema. We will call it exactly the same
+as we call it in the bronze schema. So again it's just called claim but this time in the silver schema we will set
+some table properties to enhance the metadata right here. And now we will add
+our data quality checks. And for this we can leverage this builtin data quality
+functionalities within the declarative pipelines. So what we do here for now we
+could add much more here but we will just focus on two quality checks for now
+per table and for this claim table we check two things right first of all this
+is the syntax how you create those data quality checks within the declarative pipelines. So you just specify right
+before the table definition you specify expect all for example if you have
+multiple checks and in this case I am defining two data quality checks and
+then here I specify the actual logic that is used to perform this data quality check. So here it's super
+simple. I'm just saying claim number is not null and then I have a second check
+checking for the valid incident hour. Right, we have this column called incident hour and I just want to make
+sure it's between zero and 23 to make sure this is not some weird number that
+does not make sense. So now you might be wondering, okay, what if one of those data quality checks right here is not
+passing? Right? So what if I have a claim number that is indeed a null or what if I have an incident hour that is
+maybe 45, right? The default behavior as I just specified here expect all is to
+give me a warning right I will see later on in the user interface there were
+several records maybe out of the thousand records that I ingested maybe
+10 of those did not pass this data quality check and then I will see it
+visually as a warning right but maybe that's not enough maybe I want to have
+different actions based on the results of these these data quality checks. So what I could do here as well is instead
+of saying expect all which just would give me the warning I could also say
+expect all or drop. So actually for those records that do not pass these
+data quality checks now it would drop the record out of the target table and
+this is most likely what we would like to achieve for most of the use cases. There is one more alternative that we
+could do. So instead of saying expect all or drop, we could also say expect all or fail. So now if one of the
+records of my source table does not pass one of those two data quality checks,
+then it would fail the whole pipeline. If I would want to make sure, okay, if
+any of my input records something is not passing those two checks, then maybe I
+don't want to continue at all. I I first want to fix on my source system what the
+problem may be. Then you could also specify this behavior right here. For our use case, we go by expect or drop
+for now. And now we can go ahead and specify what we would like to check. So
+first of all, we are reading in our brows table right here, right? Performing a read stream operation and
+then we are returning this browse table with a couple of modifications on top. And these are our data quality checks
+that we perform right here. So if we make this a bit bigger, you can see for
+this table, our main transformations are adjusting the date format. And this is
+also very typical. So in a lot of the cleaning pipelines, you often mainly do
+some data quality checks plus you do some data type transformations to put
+everything into proper data formats that you expect down the road. So here we are
+making those transformations on three different columns on the claim date on
+the incident date as well as on the license issue date and as all of them
+have a slightly different date format you see here that I specify okay in this case for the incident date it looks like
+this currently and for the license issue date it's like the other format that you can see right here the rescue date is
+something we got out of our first ingestion pipeline if you have followed the last video when we used autoloader
+and here we are dropping this for our silver table. Now before we add all the other data quality checks for the other
+pipelines, let us quickly run this and see what the outcome looks like
+especially with our data quality checks that we apply now. There we go. The pipeline is being executed and we should
+see the results in a second. There we go. So now we have created our silver table. We can have a look into it and
+look at the preview tab of this lakeflow declarative pipelines. And now you see already here the icon and also if we
+hover over it, you see the claim date is now a proper date format. And what we
+could also do is we could go back right here in this overview and then we could have also a look here into the
+expectations column. If we click into this, we see an overview of our data quality checks that we performed. So we
+see in this case 100% of the source records were written into the target
+table. So all of those quality checks passed. Basically none of my rows that
+have an unvalid claim number or an incident hour. So nothing was dropped.
+But if I would have some records right here, I would see them right in this overview and they would not appear in my
+cleaned silver table right here. All right. Now let's repeat what we have done for this claim table also for all
+of our other tables. I will not go into the detail for all of those. I will just show you some other common data cleanup
+steps for the other tables as well. So now let's maybe continue with the policy
+table as this is also very straightforward here. I will just copy over all the code. So again it's super
+straightforward. All we do here is we are checking for a valid policy number.
+And here we we don't have a date that we would like to clean. But here what we do is with this premium column that we have
+right here. So this one does have like um values that could be negative. But in the clean version I would always like to
+have only the positive values. So I'm applying this absolute function right here to um from the negative records
+also store the the positive records in this in this table. Now maybe let's also
+have a look into our customer cleanup operations. Here we are doing a few more
+things. So if I just paste this right here again going quickly from the top to
+to the bottom. I perform a check on the customer ID. Then I read the browse
+table right here. Actually for the customer I have this name column which
+is having the first name as well as the last name which I would like to split here. So I'm performing some
+transformation logic right here to basically get the first name and the last name out of this one big string. So
+if we check it out very quickly and query the bronze customer table. This is what I was referring to right currently
+in the bronze version we have only this name column where we put the first name and the last name. So here maybe we
+would like to split this and this is exactly what we are doing in our cleaning pipeline. On top of this for
+the date of birth column in the customer table, we again transform the data type
+to get a proper date right here. And then I'm also doing some clean up on the actual address column right here. All
+right. Now I will also paste all the other transformations that we do all the other cleanup operations. I will put all
+of the code into a git repository after this whole series so that you can have a
+detailed look in each and every of those table transformations. But yeah, for all
+of them it's really very similar. We're doing this data quality check. We are adjusting the actual data types of the
+columns and then maybe for some specific tables we also apply some logic to do
+further cleanups. So let's not forget about our image tables. So here we also doing some some cleanup operations on
+the claim images as well as on the training images. Now we have put this all together and we can again maybe run
+the pipeline and now you also see the graph will become a bit bigger as we
+have now lots of tables that we create right here and there we go. So we were
+super fast we created all of these tables right here all of our silver tables. Now if we would move basically
+our ingestion pipelines that we have built in the last parts in the last videos we could also see uh the full
+graph right over here right but for now let's continue like this and we will anyways later in the unity catalog
+lineage see the end to end flow of the tables coming from the source system and
+then being transformed into bronze into silver and now into gold as well and
+gold is what we are going to look into next Right. So now all of these tables
+are mainly streaming tables that we have created. And now we would also like to
+create a couple of materialized views actually to have those pre-join tables
+that we can then consume by a BI tool for example by PowerBI by databicks AIBI
+dashboards or even from our custom downstream applications. for this to
+better structure it. Let's do it in this other file right here. Again, we are importing a bunch of things. And we are
+specifying our gold schema right here. And now we can go ahead and create our
+transformations. So let's start with a super simple one which is the aggregated teleatics. Here we are now reading from
+the silver table that we have just created in the other file. And now we are basically aggregating we are
+grouping by this chess number and then we are aggregating on the speed and then
+we're also averaging this this location where the actual speed was recorded right and this is this is quite typical
+for streaming data you have lots of small records and most of the time for your actual analytical analysis you
+don't need those super fine granular records right for telemetics it could be that every second or something It
+captures 10 different records of the speed of the the latitude, the longitude. So often you aggregate here,
+you put an average and maybe you say okay uh in this 10second time frame
+there was this kind of speed in this kind of location. Now we would also like to pre-join some of the tables that we
+have to create materialized views that are basically pre-joined tables and
+whenever something is changing in one of the silver tables it will just incrementally update this materialized
+view. Right? So here if we create this new table in this case it's a customer
+claim and policy join and if we update our silver customer table for example it
+will not recomputee this whole target table it will only update our
+materialized view based on the new customer record we are by the way
+putting here as table properties gold for all of our gold tables and here again it's a super simple pipeline. So
+we're just reading in the cleaned policy claim and customer from our silver layer
+and then we perform this uh join right here. We are first joining the claims with the policy and then we return the
+full join also including the customer information right here. Now let's create one final table right here because you
+see here we have now this table having the customer claim and policy information and then we would like to
+have one final table that actually also includes the teleatics information. For
+this we create this very long name here customer claim policy teleatics table
+and again we're reading in the table that we just created right here. So the customer claim policy table and what we
+do here is we are joining it with the aggregated telemetics data. All right.
+As I mentioned all the code will be uploaded to GitHub so you can have a detailed look. And now let's also
+execute this part here so that we have the gold tables created as well. Maybe also to show you one more thing. So you
+see here now this pipeline failed as I don't have this geopy library installed
+on the serverless cluster. So to fix this what I have to do basically is I have to go into my settings. I have to
+go into the environment right here and then then I need to add this dependency to also include this custom library into
+our serverless cluster. So I can just put here this version for example. So I save it and then I reexecute it and then
+now it should all work. There we go. The run successfully completed now and we see here our full graph on the right
+hand side. Again this is missing the the brows tables because we did not put them
+in here yet. Um otherwise it would show the whole end to end graph. But for now
+we already see okay we created those different tables and you also see the
+input tables are mainly streaming tables that we have right here. So those optimized delta tables produced by lake
+for declarative pipelines for very high performant input. And then we have on
+the next layer is mainly materialized views that we use for example to have
+this joint customer claim policy telemetics table. And again, this will
+help us to only incrementally reprocess this table whenever new
+records come in. Awesome. Now, let's maybe also quickly check the Unity catalog. And then afterwards, we
+actually bring everything into a proper pipeline that we orchestrate and that we schedule from time to time. Now, back in
+the Unity catalog, we click into our silver and gold schema right here. And
+now we see all of those tables were created right there. And we can go ahead
+and what we can also do now as in our lakeflow declarative pipeline that we just implemented we did not see the full
+lineage because we were building this in separate uh parts and in separate
+pipelines basically but now within the unity catalog if we click into the lineage for example let's take this
+target table right here. So now if we click into the lineage right here, we see those tables that were created, but
+then we also could potentially see the the browse tables right here as well. And this is all created for you
+automatically. And you can even check this on a column level. So if you click into one of the columns within a table,
+you will see exactly where it came from and where it went to. Cool. Now let's
+orchestrate this whole thing. Right. So we have created all the code to ingest the data to clean it to build the gold
+tables. But for now we just have done this once. And what we would like to achieve is we would like on a schedule
+maybe each hour for example we would like to run this whole pipeline to pull
+data from the different source systems meaning pulling data from the SQL server that came in the last hour reading data
+from the Kafka stream reading data from the object store and then only for those
+new records incrementally pre-process them cleaning them and
+creating those gold tables out of it so that then our dashboards on top or our
+applications on top they can also then access this newly updated data. For this we click into the jobs and pipelines and
+then we create here a lakeflow job right here. So this is the native
+orchestration solution within data bricks. It also got an update recently. So make sure you have the new lakeflow
+jobs UI on here which is currently in preview. And here we can now stitch basically everything together and put a
+schedule on top of it. First of all, let's select the first task right here. So it's structured in different kind of
+tasks. Here we could select the ingestion pipeline and this would basically bring us to creating this
+whole lake for connect pipeline for the SQL server. Again, as we have already created this, we just select ETL
+pipeline right here and we select the demo ingestion pipeline. So if you have
+watched the first part, this is what was created by our lakeflow connect pipeline
+to ingest the data from the SQL server. So we do this and we give it a name. You also see here you could add some
+notifications. For example, if things go wrong, you could specify some retries.
+So maybe for some of the tasks you want to retry them several times before
+actually failing the whole pipeline. But for now, we'll just leave it as is. and we create this first task. Now here we
+could also add the other ingestion tasks such as the pipeline that we have written to read from the stream as well
+as the autoloader pipelines that we have created to read the data from the file
+system. For now let's leave it with this ingest SQL server and next I will also
+show you how to add basically the next step. So here we are selecting again ETL
+pipeline as for the bronze to silver to gold we also created earlier in this
+part we created this lakeflow declarative pipeline to clean the data and to join the data. So here we call
+this cleaning and aggregation and we select this data transformations
+pipeline and this is pretty much how it works. We can also now specify some dependencies when when to actually run
+this second task here. So we can say okay only if all the previous ones succeeded. If I would have different
+separate tasks right here. I could also say if at least one succeeded please
+proceed with this here. And then we can structure it like this. You see there are also lots of other tasks that could
+be used. So for now we were mainly using the declarative pipelines here as a
+task. But as you can see here it could be also just simply orchestrating a notebook, a Python script, a SQL file.
+There is also this DBT integration that could be useful. You can put in if and
+else conditions within your orchestration pipeline. You could even do looping with this for each task right
+here. And you can also even refresh a data bricks dashboard or a PowerBI
+semantic model right from within the pipeline. After you have set all of this up here, what you would typically do is
+you would create a schedule right here. So you would say for example for this
+kind of pipeline it is a scheduled pipeline that I would like to trigger
+every hour for example and then this whole pipeline would be executed and
+read the new data in from the source systems incrementally process it through all your different stages and then maybe
+even publish it to a PowerBI semantic model for example. Except from this
+scheduled trigger, there is also a file arrival trigger. And there is also currently in preview a table trigger
+that you could use. All right. And that's already it. This is how you would set up this whole end to end
+orchestration pipeline to ingest and process your new arriving data on a schedule. Cool. And that was already it
+for this part. So we have seen how we can create lakeflow declarative pipelines and use its natively built-in
+data quality checks to first of all clean our data and also to apply some
+small transformations in this step from bronze to silver to fix data types for
+example and then we have also seen how we can use those silver tables and then create gold level materialized views on
+top where we join the different tables together but we still keep this incremental way of working and then at
+the end we have seen how we can see the end to end lineage as well as how we can orchestrate this whole pipeline end to
+end and execute it for example on a schedule.
+Machine Learning Computer Vision
+While there has been lots of hype around generative AI and foundational models, there are still lots of use cases for
+traditional machine learning which make it into production. Bringing machine learning models into production can be a
+struggle and that's why data bricks back then created this project called ML flow which is a framework to build production
+ready machine learning projects with its tracking and all the machine learning life cycle functionalities. To build a
+machine learning model within data bricks but also anywhere else you need to do a couple of things. First of all
+you need to ingest and pre-process the data. Often you start with exploring the
+data first in a notebook. Then you start your first experiments to build the first models and those you would ideally
+like to track. Afterwards, once you're happy with the result, you typically register this model in a model registry
+to then version it there and use this also as the central place to pull your
+model from to do either batch inference or realtime inference. Additionally, you often also want to have things like a
+feature store and also capabilities to monitor your model in production to
+automatically, for example, detect drift and to kick off automatically a new
+retraining job. All of this is possible within databicks and its native ML flow capabilities. And in this video, we will
+work on a computer vision project where we are basically fine-tuning a ResNet
+deep learning model to classify the severity of car crashes. So, we want to
+upload a picture and then our machine learning model should give us an indication if this damage that we see on
+this car crash is rather a small damage, it's a big damage or it's maybe a total
+crash. This is actually the fifth part of an end toend datab bricks project where we are currently working on to
+build a smart claims application. So if you would like to understand all the context and the use case, I would
+recommend to check out the other four videos. But now let's get started and move right into databicks. Now we are
+here within databicks and let's have a quick look into our catalog structure and what kind of data we have already
+here. In the last parts of this video series, we have created this landing
+bronze, silver, and gold schema where we ingested data from various data sources.
+We built those bronze data tables out of it. We cleaned it and put it into the
+silver schema. And then we even built like aggregations and joints on top and put this into the gold schema. In this
+video, we will focus on this training images data set which will be the input for our machine learning model that we
+train and then we register it into our gold schema and then we will first of all do batch inference on top of this
+machine learning model as well as creating this realtime inference endpoint to then use it in our
+downstream application. For this we create a new notebook right here. And for the cluster that we're going to use,
+we will create a new cluster. And this time we will use a machine learning
+cluster as it has lots of those frameworks and libraries that we need already pre-installed. We give it a name
+and we create it. All right. First of all, we install a couple of libraries right here. And then we can already get
+started with first of all exploring the data that we have and then making some
+pre-processing steps so that we can then train the machine learning model. First of all the data that we are going to
+read in is coming from the silver schema and the data is stored in training
+images. So if you want to know how it did land here, how we ingested it from
+object store, then check out the previous parts of this video series. Now we would like to have a look into it.
+All right, there we go. So we see we have in our training images table, we
+have the path where the actual image is stored. We have some time data. We have the length. And then most importantly in
+the actual content, we have this binary here representing the image right here
+in the notebook. It's even visualized. But this is just a binary that we have stored here. And we have the label
+right. So this is our training data set. Therefore, we have labels for the different car crashes. And we will use
+these labels to train the machine learning model. And in our pre-processing step in our last part, we
+basically extracted this label out of the path right here as the names always
+have the label in it. Right? Cool. Now we can go ahead and first of all we
+would like to resize the image. For this we are implementing a small function
+called resize image UDF. UDF stands for userdefined function. And we do this
+because we will take as a baseline a ResNet deep learning model and we will fine-tune it. And this model was trained
+on image sizes of 224. And therefore we need to resize all of
+our input images to basically match this preferred size for the machine learning
+model so that we can get better results out of it. So we create this function here. I don't want to go into all of the
+specifics. You will find the code at the end of the course in a git repository.
+And then we are using this function and apply it to the training data frame
+overwriting the column content and applying this resize image UDF function
+on the actual previous content. And then we store it in a new delta table called
+training images resized. And then we simply execute this right here. Right afterwards, we will also quickly double
+check our output table and see if it was created properly. And there we go. You see it looks very similar. The only
+thing that changed basically is that we have transformed the content to the proper image sizes. All right. Now our
+input training data is ready. Now to train a machine learning model within data bricks leveraging MLflow as the
+machine learning life cycle management framework we will create first a new MLflow experiment. For this we click
+over here click into custom model training and give it a name. In this case let's call it image claims
+classifier. We click on create right here. And there we go. We have this empty experiment created. Now back in
+our notebook, we are setting the experiment for MLflow by specifying the
+path of the experiment that we just created. And then there is one more step. So we transform our resized images
+into this data set variable to convert it into a format that our machine
+learning model can understand. And then we split the data set into a training
+and into a test portion to use this for the machine learning model training run.
+Now we need to make a few more transformations. So even though we resized the image already to the size of
+224 earlier, our current data set still has just those JPEG bytes basically and
+neural networks do not understand this. they work with tensors and on top of that our resonet model that we are going
+to use expects the input to be normalized. So this is what we have to do as well. Therefore we now do all of
+this right here. So first of all we are using as I mentioned already the restnet
+pre-trained model which we would like to fine-tune and this is from a hugging face basically and then we do all of
+those transformations that I just mentioned. All right. So let us execute this now as well. So now we have loaded
+this pre-trained image classification model that was already trained on lots
+of image data. Now we want to fine-tune it basically on our data. For this we
+are loading it right here and we are giving it the labels that we expect as
+an output for our classification. In our case, the labels are the classification
+of the accident severity. So, is it a minor, is it a major damage and so on
+and so forth. And then we can finally get started with the finetuning. Right now, typically in a more production
+scenario, we would also have this hyperparameter tuning step here in between now. But for demo purposes, we
+keep it simple. So, we provided the training arguments here. And then there is one more step before we start the
+fine-tuning. So we basically wrap the model in this format that you can see
+right here. So that later on we can first of all easily register it as an ML
+flow model in the Unity catalog model registry. And we can also easily then
+load it back and do inference on top of it. Perfect. And now we can finally go
+ahead again. I will not go through all of this code here. But essentially we are now starting our fine-tuning model
+training run here. And um the most important thing is that we are using ML
+flow here to run this experiment. We also give it a name right here. And we
+are also logging all of the training parameters so that everything is tracked
+within this MLflow experiment. So that also afterwards we can really easily
+understand how we came up with this model result. So what kind of parameters
+were used, what kind of data was used, the hyperparameters and so on and so
+forth. Everything is locked within ML flow and uh now we can go ahead and
+start this training run over here and you will see it will kick off an ML flow
+experiment. So if we click over here, we see that within our experiment that we
+created earlier, now this run is being kicked off and we can already click into
+it. It will take a while to complete, but you already see lots of parameters
+that are used in this training run will be tracked here. And this is super important to not lose track of what
+you're doing in your experiments. So that later on if you bring a model in production, you know exactly what kind
+of model you bring into production, what the parameters were, what it was trained
+on, what kind of model was used, and so on and so forth. And there we go. The
+experiment successfully run. And now again to elaborate once more on the
+experiment tracking within data, you see all those information here, right? You even see like the notebook that was used
+and and much more information. Now what you would like to do is to register this
+model that was created out of this experiment into the unity catalog within databicks to first of all govern it also
+through the unity catalog and also this is the way how you later on make it accessible for inference. Now let's do
+this. Let's go back to our notebook and here we register a new model using mlflow.register model. So this is
+registering it in our unity catalog and we specify the name. So we will store
+this in the gold schema and call it claims damage level and we will also
+give it an alias that this is the pro model. And now let's execute this. And yeah one more thing that we forgot here.
+So we need to specify that unity catalog is basically our model registry and this
+worked out. So now let's open the Unity catalog and here within the gold schema we see
+we have now a machine learning model called claims damage level. We see this alias that we provided with prot and we
+see this is the version number one. And if we click into it we can also see that
+this was produced out of this training run over here. We have now successfully
+trained our machine learning model and we registered it in the Unity catalog.
+Now let's test it out. To test it, let's do some batch inference using this
+model. To do batch inference within data bricks, what you can do is you can register a spark udf. So we create this
+new variable here predict damage UDF and then we specify here that we want to use
+this model that we just created and registered in the Unity catalog. What we
+can do now is we can create a new table in the gold schema
+called damage predictions. And for this we use our silver initial input images.
+We add a new column called damage prediction and then here we are leveraging the UDF basically and
+therefore we do batch inference using spark and now if we execute this cool
+that was successfully executed now let's check out the output table
+and here we see exactly the same table that we had earlier but now we have included the damage predictions
+basically right so you see the predicted labels right over here and we already See, some labels are wrong, some are
+right. And to get a better idea of how it performed, let's create this results
+table right here. And then we will plot a confusion matrix
+right over here. And then we will see how our model
+performed. There we go. So we see it it did okay, right? We also did not provide
+that much um image data. We did not do proper pre-processing, proper
+hyperparameter tuning and stuff like that. We just used this as an example. And you see here it already recognized
+correctly most of the images. So it put 16 into major which were actually major
+damages. Uh 13 into minor which were actually minor and then also 13 into
+okay which were actually okay. And um and we see here some problems right
+where the for example the prediction was okay but it was actually labeled as a
+minor damage within our input data set. Also we can write from here serve this
+model now in a real time inference endpoint right where we provide now a
+name for it. We specify the model and then we also specify the hardware where
+this model serving endpoint should run on. So is it like a CPU? Is it a big GPU
+for example? And then we uh just click here on create and then we have a
+real-time model serving endpoint. And this we have already done. So if we click right here into this uh real-time
+serving endpoint, we see it's ready to use. And now we can actually use this
+endpoint here in our application that we're about to build to do real time
+inference. So as soon as the customer is uploading their image for the claim, we
+can in real time classify it and compare it against whatever the customer is
+claiming the severity of the images. Cool. So this is the first part what we
+wanted to do. So our goal is to build this smart claims process. Right now, we
+have a machine learning model that we can use to classify automatically the
+images that our customers upload when they submit their claims for their
+accidents. But on top of that, we also want to check some additional things before we proceed with the decision if
+you want to refund automatically to the customer or if you
+want to do some additional manual checks. So one of the checks we do is of course this machine learning model. When
+the customer submits their claim, they specify how they themselves would
+classify the severity of this car crash. And then we run this machine learning
+model and compare basically if this matches what the customer is saying, right? If the customer is saying this is
+a major damage, they want to have $100,000 out of us. But actually our machine learning model is saying okay
+this is just a very small damage basically and it classifies it as like
+okay or minor right then this does not match and it would require an additional check. And then one more thing that we
+do here. So we want to do now the batch inference on the actual claim images
+where we also leverage this claim images metadata from the first part. So far we have only done it right over here for
+the training images right to to build this plot chart. But now for the actual
+claim images we also run this batch inference and store it in this output table claim images predicted. This is
+what we would like to build as a rule engine to decide if we want to release funds or we want to have some more
+investigation by a human. Right? So the first part we already implemented. We have the accident images. We use our
+machine learning model to classify the severity and then we compare basically the reported severity against the
+machine learning assessed severity. Now we want to check also uh a few more things such as the policy information
+and the claim information. So we want to check if the customer that is submitting a claim if their policy they have is
+still valid and also if the claim amount that they specify when they submit their
+claim if it is actually within the policy coverage or this also requires
+further investigation. And then as a last step also for the telemetics data. So all the data coming from the cars
+telling us how fast the customer was driving. We also want to check basically
+based on the location of the accident and the speed assessment that we do if
+the driver was driving maybe too fast. And all of this we take into our decision if we want to automatically
+release the funds or we want to do further investigation. Now let's also quickly build all of these other checks.
+So this one we we basically already have. But now also for the other checks we will build a small rules engine. And
+here we do one more thing be before we look into the actual rules. We create a
+table where we join basically our claim images predicted that we have just built
+together with our customer claim policy telemetics table because this is the
+table that we will use to apply our rules on top. We create a new table that
+we call claims rules. This is where we will put all the different rules that we
+have and that we can easily apply on top of our input data set. It will all
+become very clear in a second. Uh if we create create the first rule basically
+and one more thing so we write a small helper function to insert a rule into
+this table here. And let us execute those two
+cells here. There we go. And now we can create the first rule. And then it becomes I think super clear what we are
+trying to do here. So we want to check if for the customer who submits the
+claim the claim exceeds the policy amount right the amount that was agreed
+on in the policy from the customer that they can claim and for this we specify
+this SQL query right here. So this is what will be checked here basically if
+this sum insured. So how much is is basically covered by our policy if it's
+bigger than total and total is coming from our claim data set and it's
+specifying how much the customer claims. Right? If this is bigger then it's all good then it's in the range of my my
+customer's policy otherwise it does not match. Right? So this is the first check we do. We insert it into our claims
+rules table right here. And then we do similar things for our other checks. First of all, let us also create this
+for the machine learning model. So then we go ahead and create this severity
+rule. So we check basically if the severity matches what the customer is
+reporting in when they submit the claim. We check the speed as well. Here we
+basically just hardcode 45. And then we create an output table
+called release funds right here where we check against all of the rules that we
+specified and if all of them are good to go. So if the customer has a valid
+policy amount, if our machine learning model assessed severity matches what they claimed and if the customer is not
+exceeding the speed, then we will release the funds otherwise not. All right. And now it should become all
+super clear why we did that. Because now what we can do very easily is we can
+basically go through all of those rules here and simply apply them on our target
+table and then create this claim insights table out of it. And if we do
+this and now let us quickly query the table to see the results. Basically it
+looks exactly like the previous table but now it has all the results of our checks right in here. So you see these
+new columns here. We see for this specific record for example the date was not valid and then we got the different
+descriptions of the severity if it matches or not of the speed and then we
+got this overarching column that is specifying if the claim
+needs more investigation or if all of those previous checks are fine the funds
+can be released. And this way we built this rules engine that we can also extend very easily afterwards and then
+reapply to our target table to reassess basically all of our previous claims.
+All right. And that was already it for this part. So we have seen how we can use data bricks to build very easily
+within the notebook a machine learning model and most importantly how we can use ML flow to first of all to track our
+experiments and also then how to register it in the unity catalog and then how to do inference on top of it.
+Data Consumption
+Building a data NI platform is really fun but at the end you don't do it for fun you do it to solve a business
+problem. So after you have built your medallion architecture, after you have created your gold level tables, you want
+to make the output accessible for your business and there are different ways how you can do that within databicks. If
+you simply want to build reports and expose them to your business users, you
+can do that within databicks using the builtin AIBI dashboarding functionalities. If that is not enough
+for you and you want to have more flexibility in accessing the data, you could also build a genie space within
+data bricks that lets you chat with your data in natural language. And if you want to build a custom web application
+to include even more interactivity and to also have more flexibility on the
+actual layouts, on the designs, on the visualizations, you could build a custom databicks app for that purpose. In this
+video, we will look into all of those free options that I just mentioned and we will implement them hands-on. And
+now, let's dive right into data bricks. There we go. We are back in datab bricks. Before we start building our
+consuming applications, let's have a quick look into our catalog and the structure currently. So, we built within
+the last couple of videos. If you're following the full series, we have built this smart claims dev catalog. We have
+the landing schema. We have the bronze schema where we transformed all the data we need into the delta format. Then we
+have the silver one where we cleaned this data and where we performed some data quality checks. And then we have
+the gold schema where we have our aggregated data and our joint data ready
+for use by business applications. And we have our machine learning model which we
+trained in the last part to automatically classify the severity of car crashes. As I mentioned in the
+intro, there are many ways to consume this data now and we will mainly focus on dashboards on Genie spaces as well as
+on databicks apps. Let's start with the dashboards. So to create a new dashboard
+within databicks, we just go over here to dashboards and then we click on create dashboard. And that's already it.
+We can go ahead and get started. We get some instructions how to go about a new
+dashboard and we call this claims investigation and we already get the
+instructions right here. So first thing we would need to do is to add some data
+that is powering this dashboard. So let's do this. And basically what we do here is based on the tables that we have
+already created previously based on the for example gold tables that are already
+registered in the unity catalog we can now do some queries on top and use this
+then for a visualization in the dashboard. So let's select here our catalog and one of the schemas and here
+we start with this example. So we are accessing the smart claims dev gold
+schema and we use this claim insights table that we produced in the last episode and all we do here is we are
+counting the incident severity by the type. Right now you see we added some
+parameters right here for the start and the end date so that we can do this dynamic. And let me quickly edit this
+and make this a date. And same for this one. That's also a date. And now we can
+for example specify the 1st of January here for the start date. And for the end
+date, we can specify basically today, right? And then we can run this query
+and check out the results right here. So this is just a normal SQL query that we created right here. And then we create
+this data set for the dashboard. And this one we can for example call claims
+summary. And now we can go back to the dashboard. And here we can actually visualize it right. We can add a new
+visualization right over here. We can now either click everything together for
+us. So we can select the data set that we just created, right? The claim summary. This is the only one we have so
+far. And now I could manually basically select the visualization the x-axis
+yaxis color and so on and so forth. Or what I could also do is it is already
+even giving me this as a suggest suggestion the incident types distribution. And this is actually what
+I want to do here. And then it automatically goes ahead and creates the visualization for me. I could um further
+adjust that and say okay I don't want to have a pie chart. I actually want to have a bar chart. I could make it the
+other way around. And then I could also do the coloring better by specifying
+here that I want to have colors for the actual severity right here. And yeah, I
+could further customize this also for the coloring. And this is like a fully functional BI solution that you see
+right here. It's natively built into databicks. You don't need like a separate license for any other BI tool.
+You can just do it right into here. And it also recently added quite a lot of new features. So we can also now set
+things like general themes right here. For example, we can do the dark mode,
+light mode, uh switch. Now this is what I have done already previously. And this
+is what you can see right over here. So I have created this dashboard with lots more visualizations based on our tables
+that we created within data bricks and this gives us basically an overview
+about our whole claims that we analyzed within data bricks and yeah now I have
+this dashboard which is great. So it shows me an overview of all the claims that have been already processed, right?
+It can also show me like outputs of my machine learning model for example. But for this we will use the data bricks
+apps in a second. But what else can we do? Right? So we have this more or less
+static dashboard that is typically created by certain personas within your
+organization. And if you are a business user, maybe this answers most of your
+questions, but maybe you would like to know something specific that is not covered yet by this dashboard. Now, what
+you would have to do is reach out back to your data analysts, data engineers, and so on to include this into this
+dashboard, right? Maybe the data is not even there yet. Maybe there needs to be some some data transformations first.
+Maybe it is already there but it just takes time to create the visualization. This is where databris genie comes into
+play. Genie is basically databicks managed solution to do text to SQL. So
+if we go ahead over here and we create a new genie space and the first thing we
+do is we connect it to our data sets. In this case we could select our claim
+insights table for example. Maybe we could also select our claim rules that we created earlier. We can select the
+claims, the customers, telematics information, all of that and then create the genie space. And now we can
+basically go ahead and ask questions in natural language to our genie space. And
+genie will convert this into a SQL statement and then execute it on a SQL
+warehouse. So it already provides me some sample questions that I could ask based on my input data set. Maybe we say
+like, give me an overview of how many claims were classified
+with the different severity types. And there we go. We got a response. So, we see like for total loss, we have 1,200
+claims. For um trivial damage, it's just about 397 in our data set, right? And
+you can even look at the code and see what Genie did. And in this case, it's a fairly simple query, but you could also
+ask way more complex things and Genie would figure out what kind of query to apply. Also, how to join the different
+tables if you added proper metadata into your Unity catalog. If you also added
+like primary key and foreign key constraints, for example, it would be capable also of figuring out how to do
+more complex joints on the data set and then give you the output right here. And
+it can also do visualizations. All right, this was basically the second possibility how to consume the data
+within datab bricks. And now maybe the most exciting one is to build a databicks app. For this, we go to the
+compute tab right over here and we click into apps. And first of all, before we look at the app that I already created
+beforehand for this use case, maybe let's look at the options if we start from zero. So we create the app right
+here and then we get a bunch of different options for different
+frameworks. So for example, we could create a streamlit app and we get a
+template for a data app, an interactive data app, for an OTP database app for
+example and so for the different frameworks we get different options here. To start with a simple example,
+let's choose streamllet and let's choose data app right here. And as a next step,
+we can provide different resources that the app will use. The resources right
+here are the different resources within data bricks that the app can then use to
+for example use a SQL warehouse to write a query or push down a query on top of your data set. So for this easy app,
+there is only the SQL warehouse as an option. If you would build like a custom app for example and um maybe let's
+quickly see how this looks like. Here we can add way more resources, right? So here we can add not only a SQL
+warehouse, we can add a serving endpoint for example to easily access our machine
+learning model endpoint that we created. We can also add a database which is an
+OOLTP database that we will also look into in a second and therefore we can
+link our different resources within data bricks so that the app can very easily access. Now let's go back to the simple
+example where we wanted to create a streamlit data app and we select our SQL
+warehouse. We click on next, next and install. Now we wait a couple of minutes
+for the app to actually deploy and then we can access it. Now the app is running. So if we click into it, we will
+see how a sample app could look like. We authorize it and there we go. This is
+like a sample app and how it could look like. So here we have some input fields to predict the fair on some sample taxi
+data set, right? And it's just like um a web app now that we can use. We can
+expose it internally in our company and um basically build on top of this
+template. Cool. Now we have seen the simple example. Now let's look into the app that I have built already for our
+use case which is deployed right here. First of all, maybe before we look into the app, let's quickly check out the
+resources right here because here it's a bit more advanced compared to what we
+have seen so far. So in this case, I have not only the SQL warehouse, but I have also a Postgress database and a
+serving endpoint. So you may be wondering about this database right here. So maybe let's quickly look into
+this and then we check out the actual app. So what I have done is I have
+created within databicks a lakebase database instance and this is something
+that was just recently announced and is currently in public preview. In this compute tab you can create an OOLTP
+database right here and this is what I have done. This is a posgress database and it's a relational database. And the
+reason I have built this is because if you're building web applications, you often would like to have a smooth user
+experience where the different data assets load very quickly. The problem is
+if we go always through the SQL warehouse to access our data to for example visualize some customer
+information or claim information you would always have some kind of latency because the SQL warehouse is more of an
+analytical compute option right it's operating on an object store and with data that is in a columner format right
+in in Delta and parket this is where we would typically in applications use a relational database for and And this is
+um why I created this OOLTP database right here. And then what I can do here
+is I can go to my catalog. I can go to one of my tables. In this case, I'm
+choosing the customer claim policy teleatics table as this is the one that
+I would like to access from my front end. And I create a synced table out of
+it. And sync table means I create a posgress table out of my delta table.
+For this I specify the name. I just name it exactly like this. But I put also lake base uh right over here. Then I
+select the database instance. And then I choose the primary key which is the
+claim number in this case. And then I click on create. And there we go. The
+sync is completed. And we also see this is now a synced table which means this
+is a lakebase table that we created right here. So out of our delta table
+that could be accessed from the SQL warehouse we created a relational
+database table a posgress table and now we can in our app go right to the
+lakebased database and access this table with very low latency and just quickly
+extract some kind of info out of that. To show you how this looks like, we can also here basically query this uh
+lakebased database using the posgress editor right inside data brick. So you
+see here at the top now we are connected to to posgress not not the SQL server
+anymore and we can run queries on top and there we go. We get the results super fast and this is now really going
+through the Postgress database and not through the SQL warehouse anymore. And this is what I have implemented in my
+app as well. So now we can finally maybe click into it and see what I have built
+here. We open it up right over here. And there we go. So this is the app that I
+have built for this specific use case. As you can see at the top here, it has two different modes basically. It has
+the customer mode which we are in currently as well as the admin mode. The
+customer mode is basically to mimic or to give you an idea how the claim
+submission process could look like for this use case. So the idea is the customer logs into this portal or it
+could also be an app basically and then they submit their claims right here. And
+this is what we're going to do now. And then we have the admin mode. And this we will see afterwards. This is basically
+for internal use our app that we could use to further analyze all of the
+claims, all of the severities for our internal people basically to review all
+of the claims that did not pass all of those out of the box checks that we perform. So now let's upload an image of
+encar damage, right? Let's choose one of the the major ones. Let's choose maybe
+this one right here. This is a major damage here. So hopefully also our
+machine learning model should classify this properly. You also see here on the bottom right that we get this popup and
+this is what I implemented basically. So just now we did the inference on this image that I uploaded and we saw it's it
+was classified as as major right and then um here I provide some more information before I can submit the
+claim. So here let's put maybe 2222 as the policy number. We put in the
+accident location. So here maybe let's put in Munich. Um we specify the claim
+amount. So in this case maybe this was a full crash as you have seen in the image. Maybe we we say okay it's like
+30,000 accident date. Let's say it happened today. And then for the self
+assessed severity. So this is what I as a customer think this claim is. And here I would put major damage, right? And we
+already saw basically that our machine learning model thinks the same. Now we add a collision type. For this one, we
+put multi vehicle. We say they were um free vehicles involved. We can put some
+additional notes. And now I can basically submit. Now what happens? It's processing the claim. And there we go.
+This was quite fast. We already get the information that our claim has been
+approved. And what happened under the hood? It performed several checks here. So it checked the image severity, used
+our machine learning model to compare the selfassessed severity by the customer with the prediction from our
+machine learning model. We checked the policy amount. So those 30,000 that we
+inputed, this is still within the policy of the specific customer. We made sure
+that the policy date is still valid and we even performed a speed check based on
+the teleatics data to make sure that this customer was not driving too fast.
+And therefore, we completely automatically reviewed this claim and
+already give the information you will receive your refund within 3 to five business days. Now, let's copy the claim
+number right here because now we will switch to the admin mode. And the admin mode is built as I mentioned for
+internal usage to further analyze the different claims. We we see here we have
+the overview and the analysis tab. In the overview tab first of all we get an
+overview about the total claims and then also how many were like a major damage,
+how many were like a minor damage and so on and so forth. We can even filter here by severity type for example. And this
+will also filter our claims list that we see right here. And this is just an overview for us to see. Okay, I have
+these many claims with a minor damage for example. And I see the status of the
+different claims. So this is what I could implement within my company. All the claims that do not pass this out of
+the box checks, they will become under review. And then I know, okay, I should
+check all the claims that do not pass those out of the box checks. And then I could log in here as an employee and I
+could further investigate the different claims. Now on the analysis tab, if we
+click over here, we see even more details for each of the different claims. So here one of the the claims is
+pre-selected for a customer called Zims. We see the different severity checks for
+each of the different claims. So we see again the the severity matches. Um we
+see the accident image uploaded by the customer here. It matches what our machine learning model predicted. In
+this case for this claim it's it's also all fine. So it was within the limit. The policy is fine. The speed check was
+fine. Now we could also search for the claim that we have just submitted. Let's
+do this. And you see this is the image that we uploaded. And you see again that we passed all checks. And this way I
+could analyze all of my claims. I would specifically look out for the claims that do not match that do have some
+problems right here. So in this case it's all super nice. Um but in other cases I would maybe have a severity
+mismatch. I would have a policy amount that is over the amount that is allowed right and maybe an a policy that is not
+even um valid any cool. And that was it. That was all I wanted to show you for
+the databicks apps part. And I hope you enjoyed it. And yeah, that's pretty cool and quite flexible what we can build
+here with datab bricks apps. All right, and that's already it. In this video, we have seen different options how we can
+consume the data that we produced and the machine learning models. We have seen how we can build dashboards with
+AIBI dashboarding functionality. We have seen how we can also speak with our data
+in natural language using Genie. And then we actually saw also how we can really build apps inside datab bricks
+that use our different resources that can use our SQL warehouse that can use a
+lakebased database and that can also use a model serving endpoint to build really
+custom interactive apps that can be used in my organization to serve different
+kind of use cases and make the data more accessible. All right, and that was it for this end to end video course.
