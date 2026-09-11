@@ -68,7 +68,7 @@ green.
 
 - [ ] T012 [P] Implement `src/smart_claims/lib/severity.py` — the single `SEVERITY_DOMAIN` tuple, `normalize(label)`, and `MODEL_LABEL_MAP` mapping classifier classes onto the domain. No Spark import
 - [ ] T013 [P] Implement `src/smart_claims/lib/payload.py` — `decode_telematics(data_b64) -> dict | None`. No Spark import
-- [ ] T014 [P] Implement `src/smart_claims/lib/cleaning.py` — `split_name`, `normalize_address`, `parse_date(value, fmt)`. No Spark import
+- [ ] T014 [P] Implement `src/smart_claims/lib/cleaning.py` — `split_name`, `normalize_address`, `parse_date(value, fmt)`. No Spark import and delete the `resources/.gitkeep` placeholder, which exists only so the directory is tracked before the first resource YAML
 - [ ] T015 [P] Implement `src/smart_claims/lib/decision.py` — `CheckResult` (`pass`/`fail`/`indeterminate`) and `overall_outcome(results) -> str`. No Spark import
 - [ ] T016 Create `resources/catalog.yml` declaring catalog `smart_claims_dev` and schemas `source`, `landing`, `bronze`, `silver`, `gold`, plus managed volumes `landing.telematics_raw`, `landing.claims`, `landing.training_images` (depends on T001)
 - [ ] T017 Create `src/smart_claims/lib/config.py` reading `catalog`, `speed_threshold` and volume roots from pipeline/job configuration with no hardcoded catalog name
