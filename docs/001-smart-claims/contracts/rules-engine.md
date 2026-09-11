@@ -47,9 +47,18 @@ to `true` would approve it, which is worse.
 **Overall outcome**:
 
 ```
-release_funds            when every enabled rule evaluated to pass
-requires_investigation   otherwise (any fail, or any indeterminate)
+release_funds            when there is AT LEAST ONE enabled rule
+                         and every one of them evaluated to pass
+requires_investigation   otherwise (any fail, any indeterminate,
+                         or no enabled rules at all)
 ```
+
+**The "at least one rule" clause is not pedantry.** Read as plain universal quantification,
+"every rule passed" is vacuously true over an empty set — so emptying the rule table, or
+disabling every rule, would auto-approve every claim. That is the worst available failure
+direction: a configuration mistake silently paying out. An empty rule set means nothing was
+verified, which is not the same as all-clear, so it yields `requires_investigation`.
+Asserted by `tests/unit/test_decision.py`.
 
 ## `check_expr` requirements
 

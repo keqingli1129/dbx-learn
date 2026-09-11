@@ -386,8 +386,9 @@ portal end to end and confirm the decision matches what the rules engine would p
   and telematics speed against the permitted threshold.
 - **FR-032**: System MUST record each check's individual outcome per claim, plus an overall
   outcome of either release-funds or requires-investigation.
-- **FR-033**: A claim MUST be marked release-funds only when every check passes; any failed or
-  indeterminate check MUST mark it requires-investigation.
+- **FR-033**: A claim MUST be marked release-funds only when at least one check ran and every
+  check passed; any failed or indeterminate check, or the absence of any checks at all, MUST
+  mark it requires-investigation.
 - **FR-034**: System MUST support re-evaluating all existing claims after a rule is added or
   amended.
 
