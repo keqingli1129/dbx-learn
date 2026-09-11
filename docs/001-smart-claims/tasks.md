@@ -39,7 +39,7 @@ green.
 
 **Purpose**: bundle skeleton and test harness. No business logic.
 
-- [ ] T001 Create the bundle root `databricks.yml` with bundle name `smart_claims`, a single `dev` target bound to workspace host `https://dbc-b5c9918e-c2d2.cloud.databricks.com`, `mode: development`, and variables for `catalog` (default `smart_claims_dev`), `speed_threshold` (default `45`), and `warehouse_id` (default `cdcb7003ae7dd5ab`, the existing Serverless Starter Warehouse)
+- [X] T001 Create the bundle root `databricks.yml` with bundle name `smart_claims`, a single `dev` target bound to workspace host `https://dbc-b5c9918e-c2d2.cloud.databricks.com`, `mode: development`, and variables for `catalog` (default `smart_claims_dev`), `speed_threshold` (default `45`), and `warehouse_id` (default `cdcb7003ae7dd5ab`, the existing Serverless Starter Warehouse)
 - [ ] T002 Create the Python package skeleton — `src/smart_claims/__init__.py` plus empty `lib/`, `setup/`, `ingest/`, `transform/`, `ml/`, `genie/`, `app/` subpackages each with `__init__.py`
 - [ ] T003 Add project dependencies to `pyproject.toml`: runtime `fastapi`, `uvicorn`, `python-multipart`, `databricks-sdk`; dev group `pytest`, `pytest-mock`. Keep the existing `databricks-connect~=18.0.0` dev dependency — do NOT add `pyspark`, it conflicts with databricks-connect (research R10)
 - [ ] T004 [P] Configure pytest in `pyproject.toml`: `testpaths = ["tests"]`, and register the marker `workspace` for tests requiring a live profile, with `addopts = "-m 'not workspace'"` so `pytest` runs offline by default
