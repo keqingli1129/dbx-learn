@@ -3,6 +3,7 @@
 
 bundle:
   name: smart_claims
+  uuid: 83ca2a4c-a2f1-4464-bec4-597a0296214c
 
 include:
   - resources/*.yml

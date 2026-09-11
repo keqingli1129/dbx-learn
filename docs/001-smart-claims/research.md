@@ -223,3 +223,43 @@ so `databricks-connect` works for the integration suite when a profile is availa
 **Consequence for design**: this is a real constraint on how the transformation code is
 structured, not just a testing detail. Cleaning logic must not be written inline inside pipeline
 decorators; it belongs in an importable module the pipelines call into.
+
+## R11. Why the bundle was hand-written rather than `databricks bundle init`
+
+**Method**: ran `databricks bundle init default-python` into a scratch directory and read the
+generated `databricks.yml`, pipeline resource, `pyproject.toml` and `tests/conftest.py`.
+
+**Decision**: hand-write `databricks.yml` and the resource files, but **adopt three patterns**
+the template revealed.
+
+**Rationale for not scaffolding**: `bundle init` creates a *new* project from a template. This
+repository already exists and already has a layout the plan prescribes — `pyproject.toml` managed
+by `databricks environments setup-local`, `docs/001-smart-claims/`, `.specify/`, and the
+`src/smart_claims/lib/` boundary that Constitution II requires. The template generates its own
+competing structure (`src/<project>_etl/transformations/`, sample taxi jobs, a `fixtures/`
+directory) that would then have to be deleted and reworked. Scaffolding over an existing,
+specified layout costs more than it saves.
+
+**Patterns adopted from the template**:
+
+1. **`bundle.uuid`** — a stable identifier for the bundle. Added to `databricks.yml`.
+2. **Editable install for pipeline code** — the template's pipeline resource declares
+   `environment.dependencies: ["--editable ${workspace.file_path}"]`. This is how a pipeline
+   imports the project's own Python package from the deployed files. It is the mechanism that
+   makes Constitution II workable in practice: without it, `src/smart_claims/ingest/*.py` cannot
+   `import smart_claims.lib`. Applies to T028 (ingest pipeline), T061 (transform pipeline).
+   Requires a `[build-system]` in `pyproject.toml` — ours currently has none. Folded into T003.
+3. **Pipeline dependency caching caveat** — the template's `pyproject.toml` warns: *"for
+   pipelines, dependencies are cached during development; add dependencies to the 'environment'
+   section of your pipeline.yml file instead"*. This confirms the plan's approach of declaring
+   `torch`/`torchvision`/`mlflow` on the job and pipeline environments (T023, T074) rather than
+   in `[project].dependencies`.
+
+**Also noted, not adopted**: the template's `tests/conftest.py` initialises Databricks Connect for
+*every* test and falls back to serverless. That contradicts Constitution I, which requires
+`tests/unit/` to run with no workspace at all. Our `conftest.py` (T005) splits the two suites
+instead — Spark only for `workspace`-marked tests.
+
+**Also noted**: `${workspace.current_user.short_name}` resolves to the deploying user's short
+name, the template's mechanism for per-developer dev schemas. Not applicable here — our schema
+names (`bronze`, `silver`, `gold`) are fixed by the medallion design — but useful to know.
