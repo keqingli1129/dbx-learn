@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: Reproduce the end-to-end Databricks project described in `transcript.txt` (repo root) as a reproducible, bundle-deployed implementation, adapted to run entirely inside a Databricks Free Edition workspace with no external cloud services.
+**Input**: Reproduce the end-to-end Databricks project described in `docs/transcript.txt` as a reproducible, bundle-deployed implementation, adapted to run entirely inside a Databricks Free Edition workspace with no external cloud services.
 
 ## Context
 

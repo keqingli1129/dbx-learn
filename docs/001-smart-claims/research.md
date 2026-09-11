@@ -239,7 +239,7 @@ conflict to avoid.
 
 **Corrected decision**: scaffold with `databricks bundle init default-python`, which creates the
 bundle at `smart_claims/`. The outer `uv` repository remains the specification and notes layer
-(`transcript.txt`, `docs/001-smart-claims/`, `.specify/`); the bundle is a self-contained project
+(`docs/transcript.txt`, `docs/001-smart-claims/`, `.specify/`); the bundle is a self-contained project
 beneath it.
 
 **Method**: two experiments, both run before deciding.

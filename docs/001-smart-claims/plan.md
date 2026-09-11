@@ -6,7 +6,7 @@
 
 ## Summary
 
-Reproduce the seven-part Databricks project from `transcript.txt` as a bundle-deployed,
+Reproduce the seven-part Databricks project from `docs/transcript.txt` as a bundle-deployed,
 version-controlled implementation on a Free Edition workspace: a `smart_claims_dev` catalog with
 five schemas, three ingestion paths, a quality-enforced medallion transformation, a governed
 image classifier, a data-driven triage rules engine, and three consumption surfaces including a
@@ -119,8 +119,9 @@ dbx-learn/                          # the bundle IS the repository
 ├── pyproject.toml                  # [build-system] hatchling — packages src/smart_claims
 ├── .gitignore  README.md  fixtures/
 ├── .vscode/__builtins__.pyi        # makes Pylance resolve `spark`, `dbutils`
-├── transcript.txt                  # source material
-├── docs/001-smart-claims/          # spec, plan, research, contracts, tasks
+├── docs/
+│   ├── transcript.txt              # source material
+│   └── 001-smart-claims/           # spec, plan, research, contracts, tasks
 ├── .specify/                       # constitution, templates
 ├── resources/
 │   ├── catalog.yml                 # catalog, 5 schemas, 4 volumes
