@@ -1,8 +1,7 @@
 # Smart Claims Constitution
 
-**Path convention**: file paths in this document are relative to the bundle root,
-`smart_claims/`, which is where every `databricks bundle` command is run. From the repository
-root they carry a `smart_claims/` prefix.
+**Path convention**: the bundle is the repository, so file paths in this document are relative
+to the repository root, which is also where every `databricks bundle` command is run.
 
 ## Core Principles
 
@@ -159,4 +158,4 @@ review failure, not a judgement call.
 **Runtime guidance**: `docs/001-smart-claims/plan.md` and `docs/001-smart-claims/tasks.md` carry the
 operational detail. This constitution carries only what must not be traded away.
 
-**Version**: 1.0.1 | **Ratified**: 2026-09-09 | **Last Amended**: 2026-09-10
+**Version**: 1.0.2 | **Ratified**: 2026-09-09 | **Last Amended**: 2026-09-10

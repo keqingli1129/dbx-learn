@@ -296,3 +296,19 @@ reading one costs minutes. Checking whether a premise is true costs less than th
 **Path convention consequence**: from this point, paths in `plan.md`, `tasks.md` and the contracts
 are repository-root-relative and therefore carry the `smart_claims/` prefix. Every
 `databricks bundle ...` command runs from inside `smart_claims/`.
+
+**Amendment (2026-09-10)**: uv was subsequently removed from the project and the bundle relocated
+from `smart_claims/` to the repository root. `bundle init` still cannot initialise in place, so
+the scaffold was generated into a temporary directory and its contents moved up — the tool's
+output is unchanged, only its location is. Two consequences:
+
+- The `artifacts: {python_artifact: {type: whl, build: uv build --wheel}}` block was removed. It
+  was the bundle's **only** uv dependency, verified empirically: `bundle validate --strict`
+  succeeds with uv absent from `PATH` entirely. No wheel is needed, because pipelines install the
+  project with `--editable ${workspace.file_path}`.
+- `pyproject.toml` is retained. It is standard packaging, not a uv artifact — `[build-system]`
+  (hatchling) is what makes the editable install work, and `pip install -e '.[dev]'` replaces
+  `uv sync`.
+
+The generated `CLAUDE.md` and `AGENTS.md` were also deleted: at the repository root they would
+override this project's own agent instructions with text describing the template's demo.

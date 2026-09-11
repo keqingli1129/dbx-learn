@@ -9,21 +9,18 @@ success criteria. Run them in order — later sections depend on earlier data.
 
 - Databricks CLI ≥ v1.15.0, authenticated on the `DEFAULT` profile (`databricks auth profiles`
   must show `Valid: YES`).
-- `uv` and Java 21 locally, for the test suites.
+- Python 3.12 and Java 21 locally, for the test suites. No uv — a plain virtualenv is used.
 - Authority to create catalogs, pipelines, jobs, dashboards and apps in the workspace.
 
-**Working directory**: every `databricks bundle ...` and `uv run pytest ...` command below runs
-from inside the bundle, `smart_claims/`, not the repository root:
-
-```bash
-cd smart_claims
-```
+**Working directory**: the repository root — the bundle is the repository.
+**No uv**: use a plain virtualenv (`python -m venv .venv && . .venv/bin/activate && pip install -e '.[dev]'`);
+commands below are written as bare `pytest`.
 
 ## 0. Offline tests — no workspace needed
 
 ```bash
-uv sync
-uv run pytest tests/unit -v
+python -m venv .venv && . .venv/bin/activate && pip install -e '.[dev]'
+pytest tests/unit -v
 # note: pytest defaults to -m 'not workspace', so integration runs need an explicit -m workspace
 ```
 
@@ -187,7 +184,7 @@ mediocre matrix is an acceptable outcome; an empty one is not.
 **Rules (SC-010, SC-011)** — the triage test fixtures construct one claim per violated rule:
 
 ```bash
-uv run pytest tests/integration/test_rules_engine.py -v -m workspace --profile DEFAULT
+pytest tests/integration/test_rules_engine.py -v -m workspace --profile DEFAULT
 ```
 
 **Expect**: for each of the four checks, the claim violating only that check is
