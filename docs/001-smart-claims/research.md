@@ -224,10 +224,18 @@ so `databricks-connect` works for the integration suite when a profile is availa
 `PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages` (ROS 2 Jazzy). A virtualenv does **not**
 override `PYTHONPATH`, so that directory lands on `sys.path` inside the project venv — `pip`
 reported a `launch-ros` dependency conflict while installing this project, which is how it
-surfaced. Nothing currently shadows a project module, but an unrelated site-packages tree on the
-path makes SC-016 ("passes from a clean checkout") environment-dependent. Tests should therefore
-be run with `PYTHONPATH` cleared (`env -u PYTHONPATH pytest ...`), and `conftest.py` (T009) should
-fail loudly if foreign paths are present rather than let them pass silently.
+surfaced.
+
+**Corrected at T007** — the failure is worse than shadowing, and earlier. That tree registers
+pytest plugins by entry point (`launch_testing`), and **pytest auto-loads entry-point plugins
+before any conftest is imported**. With `PYTHONPATH` set, pytest dies during startup with
+`ModuleNotFoundError: No module named 'yaml'` — an unrelated ROS dependency missing from this
+venv. No `conftest.py` hook can intercept it, because conftest is loaded too late.
+
+Mitigation is therefore a wrapper, not a hook: `./run-tests.sh` execs pytest with `PYTHONPATH`
+cleared. The `conftest.py` check is retained as a backstop for environments where a foreign tree
+is present but does not crash startup, with `SMART_CLAIMS_ALLOW_FOREIGN_PYTHONPATH=1` as an
+escape hatch.
 
 **Consequence for design**: this is a real constraint on how the transformation code is
 structured, not just a testing detail. Cleaning logic must not be written inline inside pipeline

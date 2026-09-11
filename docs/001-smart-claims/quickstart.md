@@ -20,8 +20,9 @@ commands below are written as bare `pytest`.
 
 ```bash
 python -m venv .venv && . .venv/bin/activate && pip install -e '.[dev]'
-pytest tests/unit -v
-# note: pytest defaults to -m 'not workspace', so integration runs need an explicit -m workspace
+./run-tests.sh tests/unit -v
+# run-tests.sh clears PYTHONPATH, which pytest cannot do for itself (research R10).
+# pytest defaults to -m 'not workspace', so integration runs need an explicit -m workspace.
 ```
 
 **Expect**: all pass. This is SC-016. It must pass before anything is deployed — it covers
@@ -184,7 +185,7 @@ mediocre matrix is an acceptable outcome; an empty one is not.
 **Rules (SC-010, SC-011)** — the triage test fixtures construct one claim per violated rule:
 
 ```bash
-pytest tests/integration/test_rules_engine.py -v -m workspace --profile DEFAULT
+./run-tests.sh tests/integration/test_rules_engine.py -v -m workspace --profile DEFAULT
 ```
 
 **Expect**: for each of the four checks, the claim violating only that check is
