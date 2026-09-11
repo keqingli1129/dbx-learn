@@ -21,11 +21,15 @@ Choose how you want to work on this project:
 
 (c) With command line tools, see https://docs.databricks.com/dev-tools/cli/databricks-cli.html
 
-If you're developing with an IDE, dependencies for this project should be installed using uv:
+If you're developing with an IDE, install this project's dependencies into a virtualenv:
 
-*  Make sure you have the UV package manager installed.
-   It's an alternative to tools like pip: https://docs.astral.sh/uv/getting-started/installation/.
-*  Run `uv sync --dev` to install the project's dependencies.
+*  `python -m venv .venv`
+*  `. .venv/bin/activate`
+*  `pip install -e '.[dev]'`
+
+This project does not use uv. The only uv-dependent step in the generated template was the
+`artifacts: uv build --wheel` block, which has been removed — pipelines install this project with
+`--editable ${workspace.file_path}` instead, so no wheel is built.
 
 
 # Using this project using the CLI
@@ -66,5 +70,5 @@ with this project. It's also possible to interact with it directly using the CLI
 
 5. Finally, to run tests locally, use `pytest`:
    ```
-   $ uv run pytest
+   $ pytest
    ```
