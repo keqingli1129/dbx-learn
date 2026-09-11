@@ -220,6 +220,15 @@ scalar values with thin Spark UDF or expression wrappers around them. The logic 
 offline and the wrappers are trivial enough not to need unit tests. Java 21 is present locally,
 so `databricks-connect` works for the integration suite when a profile is available.
 
+**Environment hazard found at T005**: this machine's shell profile exports
+`PYTHONPATH=/opt/ros/jazzy/lib/python3.12/site-packages` (ROS 2 Jazzy). A virtualenv does **not**
+override `PYTHONPATH`, so that directory lands on `sys.path` inside the project venv — `pip`
+reported a `launch-ros` dependency conflict while installing this project, which is how it
+surfaced. Nothing currently shadows a project module, but an unrelated site-packages tree on the
+path makes SC-016 ("passes from a clean checkout") environment-dependent. Tests should therefore
+be run with `PYTHONPATH` cleared (`env -u PYTHONPATH pytest ...`), and `conftest.py` (T009) should
+fail loudly if foreign paths are present rather than let them pass silently.
+
 **Consequence for design**: this is a real constraint on how the transformation code is
 structured, not just a testing detail. Cleaning logic must not be written inline inside pipeline
 decorators; it belongs in an importable module the pipelines call into.
