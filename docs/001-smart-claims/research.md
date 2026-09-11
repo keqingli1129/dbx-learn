@@ -224,42 +224,75 @@ so `databricks-connect` works for the integration suite when a profile is availa
 structured, not just a testing detail. Cleaning logic must not be written inline inside pipeline
 decorators; it belongs in an importable module the pipelines call into.
 
-## R11. Why the bundle was hand-written rather than `databricks bundle init`
+## R11. Bundle scaffolding — `databricks bundle init`, and a corrected premise
 
-**Method**: ran `databricks bundle init default-python` into a scratch directory and read the
-generated `databricks.yml`, pipeline resource, `pyproject.toml` and `tests/conftest.py`.
+**Status**: this decision was made wrongly the first time and is recorded here in full, because
+the error is instructive.
 
-**Decision**: hand-write `databricks.yml` and the resource files, but **adopt three patterns**
-the template revealed.
+**The original decision** was to hand-write `databricks.yml` at the repository root, on the
+reasoning that `bundle init` would fight an existing project layout. **That reasoning rested on a
+false premise**: that this repository was already a bundle project needing to be preserved. It is
+not. `main.py` prints `"Hello from dbx-learn!"`, there is a `uv.lock` and a `.python-version`, and
+`pyproject.toml` has no `[build-system]` — it is a `uv init` scaffold, later run through
+`databricks environments setup-local`. Nothing about it was bundle-shaped, so there was no
+conflict to avoid.
 
-**Rationale for not scaffolding**: `bundle init` creates a *new* project from a template. This
-repository already exists and already has a layout the plan prescribes — `pyproject.toml` managed
-by `databricks environments setup-local`, `docs/001-smart-claims/`, `.specify/`, and the
-`src/smart_claims/lib/` boundary that Constitution II requires. The template generates its own
-competing structure (`src/<project>_etl/transformations/`, sample taxi jobs, a `fixtures/`
-directory) that would then have to be deleted and reworked. Scaffolding over an existing,
-specified layout costs more than it saves.
+**Corrected decision**: scaffold with `databricks bundle init default-python`, which creates the
+bundle at `smart_claims/`. The outer `uv` repository remains the specification and notes layer
+(`transcript.txt`, `docs/001-smart-claims/`, `.specify/`); the bundle is a self-contained project
+beneath it.
 
-**Patterns adopted from the template**:
+**Method**: two experiments, both run before deciding.
 
-1. **`bundle.uuid`** — a stable identifier for the bundle. Added to `databricks.yml`.
-2. **Editable install for pipeline code** — the template's pipeline resource declares
+1. `databricks bundle init default-python --config-file cfg.json --output-dir .` executed **on top
+   of a copy of this repository**. Result: it created a nested `smart_claims/` directory and left
+   the existing `databricks.yml` and `pyproject.toml` byte-identical (verified with `md5sum -c`).
+   **`bundle init` has no in-place or merge mode** — `--output-dir` names the *parent*, and the
+   project directory is always created from `project_name`. This is the operational fact that
+   makes "init vs hand-write" a false choice: the tool cannot scaffold into an existing project,
+   so the real choice is where its output lives.
+2. The generated tree was read in full before adopting it.
+
+**What the scaffold supplies that the hand-written file lacked**:
+
+| Item | Note |
+|---|---|
+| `artifacts.python_artifact` (`uv build --wheel`) | absent from the hand-written version entirely |
+| `[build-system]` (hatchling) in the bundle's own `pyproject.toml` | required for the editable-install pattern below; the outer uv project has none |
+| A `prod` target with explicit `root_path` and `permissions` | |
+| `.vscode/__builtins__.pyi` → `from databricks.sdk.runtime import *` | makes Pylance resolve `spark`, `dbutils`, `display`, which are otherwise undefined globals in every pipeline file |
+| `.vscode/settings.json` | `python.analysis.extraPaths: ["src"]`, pytest enabled, ruff format-on-save |
+| `bundle.uuid` | |
+
+**Patterns adopted from the generated code**:
+
+1. **Editable install for pipeline code** — the generated pipeline resource declares
    `environment.dependencies: ["--editable ${workspace.file_path}"]`. This is how a pipeline
-   imports the project's own Python package from the deployed files. It is the mechanism that
-   makes Constitution II workable in practice: without it, `src/smart_claims/ingest/*.py` cannot
-   `import smart_claims.lib`. Applies to T028 (ingest pipeline), T061 (transform pipeline).
-   Requires a `[build-system]` in `pyproject.toml` — ours currently has none. Folded into T003.
-3. **Pipeline dependency caching caveat** — the template's `pyproject.toml` warns: *"for
+   imports the project's own package from the deployed files, and it is what makes Constitution II
+   workable: without it, the ingest modules cannot import `smart_claims.lib`. Applies to T028 and
+   T061.
+2. **Pipeline dependency caching caveat** — the generated `pyproject.toml` warns that *"for
    pipelines, dependencies are cached during development; add dependencies to the 'environment'
-   section of your pipeline.yml file instead"*. This confirms the plan's approach of declaring
-   `torch`/`torchvision`/`mlflow` on the job and pipeline environments (T023, T074) rather than
-   in `[project].dependencies`.
+   section of your pipeline.yml file instead"*. This confirms declaring `torch`/`torchvision`/
+   `mlflow` on job and pipeline environments (T023, T074) rather than in `[project].dependencies`.
 
-**Also noted, not adopted**: the template's `tests/conftest.py` initialises Databricks Connect for
-*every* test and falls back to serverless. That contradicts Constitution I, which requires
-`tests/unit/` to run with no workspace at all. Our `conftest.py` (T005) splits the two suites
-instead — Spark only for `workspace`-marked tests.
+**What must be removed from the scaffold** (T002): it is the NYC-taxi demo — `taxis.py`,
+`main.py`, `sample_trips_*.py`, `sample_zones_*.py`, `sample_taxis_test.py`,
+`sample_job.job.yml`, `sample_notebook.ipynb`.
 
-**Also noted**: `${workspace.current_user.short_name}` resolves to the deploying user's short
-name, the template's mechanism for per-developer dev schemas. Not applicable here — our schema
-names (`bronze`, `silver`, `gold`) are fixed by the medallion design — but useful to know.
+**What must be reworked, not merely kept**: the generated `tests/conftest.py` initialises
+Databricks Connect for *every* test and silently falls back to serverless compute. That directly
+contradicts Constitution I, which requires `tests/unit/` to run with no workspace at all. The two
+suites are split instead (T005).
+
+**Also noted**: `${workspace.current_user.short_name}` is the template's mechanism for
+per-developer dev schemas. Not used here — the medallion schema names are fixed — but worth
+knowing.
+
+**Lesson recorded deliberately**: `bundle init` is worth running even when its output will not be
+kept wholesale. The templates encode operational details absent from the documentation, and
+reading one costs minutes. Checking whether a premise is true costs less than that.
+
+**Path convention consequence**: from this point, paths in `plan.md`, `tasks.md` and the contracts
+are repository-root-relative and therefore carry the `smart_claims/` prefix. Every
+`databricks bundle ...` command runs from inside `smart_claims/`.

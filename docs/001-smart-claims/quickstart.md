@@ -12,6 +12,13 @@ success criteria. Run them in order — later sections depend on earlier data.
 - `uv` and Java 21 locally, for the test suites.
 - Authority to create catalogs, pipelines, jobs, dashboards and apps in the workspace.
 
+**Working directory**: every `databricks bundle ...` and `uv run pytest ...` command below runs
+from inside the bundle, `smart_claims/`, not the repository root:
+
+```bash
+cd smart_claims
+```
+
 ## 0. Offline tests — no workspace needed
 
 ```bash
