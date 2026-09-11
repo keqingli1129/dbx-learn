@@ -41,5 +41,21 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# Two suites, separated by a marker (Constitution I):
+#   tests/unit/        pure Python, no Spark, no workspace -- this is SC-016
+#   tests/integration/ marked `workspace`, needs a live profile
+#
+# The default run EXCLUDES the workspace suite, so `pytest` is always safe offline.
+# Because addopts are prepended to the command line, a later `-m workspace` overrides
+# this -- naming an integration file alone is NOT enough, the marker must be re-selected.
+addopts = "-m 'not workspace' --strict-markers"
+
+markers = [
+    "workspace: requires a live Databricks workspace and a configured CLI profile; excluded by default, select with -m workspace",
+]
+
 [tool.ruff]
 line-length = 120
