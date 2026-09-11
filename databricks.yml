@@ -19,6 +19,21 @@ variables:
   schema:
     description: The schema to use
 
+  speed_threshold:
+    description: >-
+      Speed above which the telematics check fails a claim, in the units the source emits.
+      A business rule, not an environment setting, so it carries a default rather than a
+      per-target assignment. The triage rule reads it, so retuning needs no code change.
+    default: 45
+
+  warehouse_id:
+    description: >-
+      SQL warehouse backing the AI/BI dashboard and the app's warehouse-backed repository.
+      Resolved by NAME rather than hardcoded, so the bundle is portable across workspaces
+      where the id differs.
+    lookup:
+      warehouse: Serverless Starter Warehouse
+
 targets:
   dev:
     # The default target uses 'mode: development' to create a development copy.
