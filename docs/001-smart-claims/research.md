@@ -312,3 +312,55 @@ output is unchanged, only its location is. Two consequences:
 
 The generated `CLAUDE.md` and `AGENTS.md` were also deleted: at the repository root they would
 override this project's own agent instructions with text describing the template's demo.
+
+## R12. Pipeline source layout — separating evaluated code from imported code
+
+**Prompted by**: a challenge to whether the planned folder structure matched current Databricks
+convention, given the source transcript is somewhat old.
+
+**Finding**: the transcript prescribes no layout at all — it is entirely UI-driven, with pipeline
+code typed into the Lakeflow editor. So it was never the source of the structure. The planned
+structure was mine, and it diverged from current convention in two ways.
+
+**Convention, per the `databricks-pipelines` project-initialization reference and the
+`databricks-dabs` SDP reference**:
+
+```
+src/<name>_etl/
+├── explorations/      # ad-hoc notebooks, NOT pipeline code
+└── transformations/   # pipeline transformations, ONE DATASET PER FILE
+```
+
+with the pipeline resource using `root_path` plus `libraries.glob.include:
+.../transformations/**`. Quoted: *"Pipeline transformations are raw `.sql` / `.py` files"* and
+*"Replace `sample_*` files in `transformations/` with real datasets (1 dataset per file)."*
+
+**Decision**: adopt it. Pipeline datasets move to
+`src/smart_claims_etl/transformations/{bronze,silver,gold}/`, one dataset per file;
+`src/smart_claims/` keeps `lib/`, `setup/`, `ml/`, `genie/`, `app/`.
+
+**Rationale — the split is mechanical, not stylistic.** `libraries.glob` causes the pipeline
+runtime to *evaluate* every matched file as a dataset definition. Had the glob pointed at
+`src/smart_claims/ingest/**`, it would also have swept in `__init__.py` and any future sibling
+module, and tried to interpret them as pipeline source. Two trees means the glob cannot reach
+importable code:
+
+- `src/smart_claims/` — **imported** (`pip install -e .`, and `--editable ${workspace.file_path}`
+  inside pipelines)
+- `src/smart_claims_etl/transformations/` — **evaluated** by the runtime
+
+Constitution II is unaffected: pipeline files still import `smart_claims.lib` for their logic.
+The editable dependency (research R11) is what makes that import resolve, so R11 and R12 are two
+halves of the same mechanism.
+
+Each pipeline's glob targets only the layers it owns — bronze for ingest, silver and gold for
+transform — which turns Constitution III's one-writer-per-table rule from documentation into
+something the configuration enforces.
+
+**Cost accepted**: roughly 17 small dataset files instead of 5 grouped ones. That is the
+convention's intent — a dataset's definition is findable by its name.
+
+**Alternatives considered**: keeping pipeline code inside the importable package with a narrower
+glob (rejected — one careless sibling module breaks it, and it diverges from every reference);
+separating the trees but keeping grouped multi-dataset files (rejected — fixes the mechanical
+risk but still ignores the one-dataset-per-file rule, for no benefit).

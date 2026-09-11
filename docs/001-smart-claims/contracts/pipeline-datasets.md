@@ -38,6 +38,11 @@ rows change (research R6).
 Cleaning logic is **imported from `smart_claims.lib.cleaning`**, not written inline in the
 decorators, so it is unit-testable offline (research R10).
 
+**File layout**: one dataset per file, named after the dataset, under
+`src/smart_claims_etl/transformations/{bronze,silver,gold}/` (research R12). Each pipeline's
+`libraries.glob` targets only the layers it owns, which is what keeps the one-writer-per-table
+invariant below mechanically enforceable rather than merely documented.
+
 ## `ml` job — not a pipeline
 
 **Reads**: `silver.training_images`, `silver.claim_images`, `gold.customer_claim_policy_telematics`.

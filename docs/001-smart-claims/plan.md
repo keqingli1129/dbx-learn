@@ -130,15 +130,22 @@ dbx-learn/                          # the bundle IS the repository
 │   └── telematics_producer.job.yml dashboard.yml            app.yml
 ├── src/
 │   ├── dashboards/claims_investigation.lvdash.json
-│   └── smart_claims/
-│       ├── lib/                    # PURE PYTHON — no Spark import, offline-testable
-│       │   ├── severity.py  payload.py  cleaning.py  decision.py  config.py
-│       ├── setup/                  # seed data, image fetch, producers, mutations
-│       ├── ingest/                 # telematics.py  cdc.py  objectstore.py
-│       ├── transform/              # bronze_to_silver.py  silver_to_gold.py
-│       ├── ml/                     # resize, train, score, seed_rules, evaluate_rules
-│       ├── genie/create_space.py   # scripted — no bundle resource type exists
-│       └── app/                    # FastAPI + repository interface + static/
+│   ├── smart_claims/               # IMPORTABLE package — pip install -e .
+│   │   ├── lib/                    # PURE PYTHON — no Spark import, offline-testable
+│   │   │   ├── severity.py  payload.py  cleaning.py  decision.py  config.py
+│   │   ├── setup/                  # seed data, image fetch, producers, mutations
+│   │   ├── ml/                     # resize, train, score, seed_rules, evaluate_rules
+│   │   ├── genie/create_space.py   # scripted — no bundle resource type exists
+│   │   └── app/                    # FastAPI + repository interface + static/
+│   └── smart_claims_etl/           # EVALUATED by the pipeline runtime, not imported
+│       ├── explorations/           # ad-hoc notebooks only (gitignored)
+│       └── transformations/        # one dataset per file
+│           ├── bronze/             # telematics, customer, policy, claim,
+│           │                       #   training_images, claim_images, claim_images_meta
+│           ├── silver/             # claim, policy, customer, telematics,
+│           │                       #   training_images, claim_images
+│           └── gold/               # telematics_agg, customer_claim_policy,
+│                                   #   customer_claim_policy_telematics
 └── tests/
     ├── unit/                       # offline, always runs (SC-016)
     └── integration/                # marked `workspace`, needs a profile
