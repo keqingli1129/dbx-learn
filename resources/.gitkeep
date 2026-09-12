@@ -1,7 +1,0 @@
-Placeholder so this directory exists in git before any resource YAML is written.
-
-Git tracks files, not directories, so an empty directory cannot be committed.
-Bundle resources land here as `<name>.<resource_type>.yml`, one per resource,
-pulled in by the `include: resources/*.yml` glob in databricks.yml.
-
-Delete this file once the first real resource YAML exists (T014, catalog.yml).
