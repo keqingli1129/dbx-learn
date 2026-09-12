@@ -381,3 +381,102 @@ convention's intent — a dataset's definition is findable by its name.
 glob (rejected — one careless sibling module breaks it, and it diverges from every reference);
 separating the trees but keeping grouped multi-dataset files (rejected — fixes the mechanical
 risk but still ignores the one-dataset-per-file rule, for no benefit).
+
+## R13. Development mode renames schemas — and what that forces
+
+**Found at T016**, on the first `bundle validate` that declared schema resources.
+
+`mode: development` prefixes **schema** names with `dev_<username>_`:
+
+| Resource | `-t dev` | `-t prod` |
+|---|---|---|
+| catalog | `smart_claims_dev` | `smart_claims_dev` |
+| schemas | `dev_keqingli1129_bronze` | `bronze` |
+| volumes | `claims` | `claims` |
+
+Only schemas are affected; catalogs and volumes are not. This is deliberate — it stops several
+developers deploying the same bundle from colliding on one set of schemas — but it means no
+schema name in this project can be written as a literal. `smart_claims_dev.bronze.telematics`
+does not exist at the `dev` target; `smart_claims_dev.dev_keqingli1129_bronze.telematics` does.
+
+**Not fixable with `presets.name_prefix`.** Tested: setting it to `""` changes nothing here. Its
+description is "the prefix for job runs of the bundle" — it governs job run names, not schemas.
+
+**Decision**: keep `mode: development` and its prefix, and never hardcode a schema name.
+Pipelines and jobs take the resolved names through `${resources.schemas.<key>.name}`, passed as
+configuration. Code and SQL read the name from config; the prefix is transparent to them.
+
+**Rationale**: the alternatives each give up something worse.
+
+- Creating schemas with SQL in a setup job would produce literal names but move them outside the
+  bundle, weakening Constitution IV and losing them from `bundle destroy`.
+- A per-developer *catalog* would keep schema names plain but relocate the isolation, and the
+  transcript's mental model is one catalog with four schemas.
+- `mode: production` removes all prefixing but also stops pausing schedules and triggers, so a
+  deployed hourly job would begin running immediately — the development-mode safety rails are
+  worth more than convenient names.
+
+**Consequences to hold onto**:
+
+1. Schema names in `spec.md`, `data-model.md` and `tasks.md` are **logical**. `bronze.telematics`
+   means "the telematics table in the bronze schema", not a literal identifier.
+2. Ad-hoc SQL must use the resolved name. Get it from
+   `databricks bundle validate -t dev -o json` rather than guessing.
+3. Volume paths inherit the prefix through the schema they sit in:
+   `/Volumes/smart_claims_dev/dev_keqingli1129_landing/telematics_raw/`.
+4. `lib/config.py` (T017) is now load-bearing rather than tidy: it is the single place that turns
+   pipeline configuration into fully-qualified names.
+
+## R14. Catalogs cannot be created through the API on a Default Storage account
+
+**Found at T018**, on the first `bundle deploy`, which failed for all eight resources.
+
+```
+API error_code: INVALID_STATE
+API message: Metastore storage root URL does not exist. Default Storage is enabled in your
+account. You can use the UI to create a new catalog using Default Storage, or please provide a
+storage location for the catalog (for example 'CREATE CATALOG myCatalog MANAGED LOCATION ...').
+```
+
+**Established by experiment**, with a throwaway catalog:
+
+| Attempt | Result |
+|---|---|
+| `catalogs create` with no `storage_root` | refused — "provide a storage location" |
+| `catalogs create` with the metastore's own `storage_root` | refused — "Please use the UI to create a catalog with Default Storage." |
+| `CREATE CATALOG IF NOT EXISTS` **via SQL** | **succeeded** |
+
+The SQL-created catalog is byte-for-byte what the API refused to make: `MANAGED_CATALOG`, same
+`storage_root` (`s3://dbstorage-prod-.../uc/...`), same owner. The restriction is in the REST
+path, not in the platform's ability to create the object — the SQL engine resolves Default
+Storage and the API does not. Both `bundle deploy` and `databricks catalogs create` use the REST
+path, so both are blocked.
+
+**Decision**: drop the `catalogs:` block from `resources/catalog.yml` and create the catalog with
+`bootstrap.sh`, an idempotent script that runs the SQL form, reading the catalog name from the
+bundle's own resolved `catalog` variable so there is no second source of truth. Schemas and
+volumes stay declared in the bundle; only the catalog moves out.
+
+**Constitution IV is satisfied, not waived.** Its escape clause already covers this: *"Where no
+bundle resource type exists ... an idempotent script driven by the same configuration values is
+required — never a documented click-path."* The clause was written for Genie spaces (R2); this is
+the second case. What it forbids is a manual UI step, which is precisely what the error message
+invites and what `bootstrap.sh` avoids.
+
+**Consequences**:
+
+1. First deploy is two commands, not one: `./bootstrap.sh` then `databricks bundle deploy`.
+   `quickstart.md` §1 updated.
+2. `bundle destroy` removes the schemas and volumes but **not** the catalog. Removing it needs
+   `databricks catalogs delete <name> --force`. Noted in T108's teardown verification.
+3. If another account ever has this restriction lifted, the `catalogs:` block can be restored and
+   `bootstrap.sh` deleted; nothing else changes.
+
+**Two shell traps hit while writing the script**, both worth remembering:
+
+- `python3 -c` inside a double-quoted shell string with escaped inner quotes produced
+  `SyntaxError: unexpected character after line continuation character`.
+- Replacing it with `... | python3 - <<'EOF'` was worse and *silently* wrong: the heredoc becomes
+  stdin, so the piped JSON is discarded and `json.load` sees an empty stream. **A command cannot
+  take stdin from both a pipe and a heredoc.** The verify step now uses the CLI's own exit status
+  and no Python at all.

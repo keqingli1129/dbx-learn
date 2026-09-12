@@ -31,9 +31,16 @@ payload decoding, name and address normalisation, date coercion and decision com
 ## 1. Deploy
 
 ```bash
+./bootstrap.sh dev DEFAULT          # creates the catalog -- see below
 databricks bundle validate -t dev --profile DEFAULT
 databricks bundle deploy -t dev --profile DEFAULT
 ```
+
+**Why `bootstrap.sh` comes first**: this account has Unity Catalog Default Storage enabled, and
+catalog creation through the REST API is refused — which is the path both `bundle deploy` and
+`databricks catalogs create` use. The same statement succeeds through SQL, so `bootstrap.sh` runs
+`CREATE CATALOG IF NOT EXISTS` with the name taken from the bundle's own resolved variable
+(research R14). It is idempotent; run it as often as you like.
 
 **Expect**: validation clean; deploy creates the catalog, five schemas, volumes, three pipelines,
 two jobs, the dashboard and the app.

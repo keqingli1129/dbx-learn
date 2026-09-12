@@ -1,0 +1,86 @@
+# Unity Catalog foundation: one catalog, five schemas, three landing volumes.
+#
+# Declared in the bundle rather than created by hand so the whole structure is reproducible from
+# a clean checkout (Constitution IV). `bundle destroy` removes exactly these and nothing else,
+# which is what keeps the workspace's unrelated catalogs safe.
+
+resources:
+  # NO `catalogs:` BLOCK -- and not by choice.
+  #
+  # This account has Unity Catalog Default Storage enabled, and catalog creation through the
+  # REST API is refused outright (research R14):
+  #
+  #   without storage_root        -> "provide a storage location for the catalog"
+  #   with the metastore's own    -> "Please use the UI to create a catalog with Default Storage."
+  #
+  # The same statement succeeds through SQL, which resolves Default Storage on the engine side.
+  # `bootstrap.sh` therefore creates the catalog with `CREATE CATALOG IF NOT EXISTS`, reading the
+  # name from this bundle's own resolved `catalog` variable so there is no second source of truth.
+  # Run it once before the first deploy. This is the Constitution IV escape clause -- a scripted,
+  # idempotent step, not a documented click-path -- the same one the Genie space uses.
+  #
+  # Consequence: `bundle destroy` removes the schemas and volumes below but NOT the catalog.
+  # Drop it by hand with `databricks catalogs delete ${var.catalog} --force` if you want it gone.
+
+  schemas:
+    source:
+      catalog_name: ${var.catalog}
+      name: source
+      comment: >-
+        Stands in for the company's operational database. Change Data Feed is enabled on these
+        tables so the ingest pipeline can replay inserts, updates and deletes through Auto CDC,
+        replacing the transcript's SQL Server + Lakeflow Connect gateway (research R4).
+
+    landing:
+      catalog_name: ${var.catalog}
+      name: landing
+      comment: >-
+        Raw arrivals in their original file formats -- telematics event files, accident and
+        training images, image metadata CSVs. Volumes only; no tables.
+
+    bronze:
+      catalog_name: ${var.catalog}
+      name: bronze
+      comment: Ingested as-is, typed but uncleaned. Owned solely by the ingest pipeline.
+
+    silver:
+      catalog_name: ${var.catalog}
+      name: silver
+      comment: >-
+        Cleaned and quality-enforced. Records failing a declared expectation are dropped here
+        and counted, never silently passed downstream.
+
+    gold:
+      catalog_name: ${var.catalog}
+      name: gold
+      comment: >-
+        Business-ready: aggregated telematics, the joined claim view, the registered classifier,
+        the rule store and the triage results.
+
+  volumes:
+    telematics_raw:
+      catalog_name: ${var.catalog}
+      schema_name: landing
+      name: telematics_raw
+      volume_type: MANAGED
+      comment: >-
+        Newline-delimited JSON telematics events, each carrying a base64 payload. Stands in for
+        the transcript's Kinesis stream (research R3); Auto Loader reads it incrementally.
+
+    claims:
+      catalog_name: ${var.catalog}
+      schema_name: landing
+      name: claims
+      volume_type: MANAGED
+      comment: >-
+        Accident photographs (images/), their metadata CSVs (metadata/), and archive/ where
+        cloudFiles.cleanSource moves files once processed.
+
+    training_images:
+      catalog_name: ${var.catalog}
+      schema_name: landing
+      name: training_images
+      volume_type: MANAGED
+      comment: >-
+        Labelled car-damage photographs, stored as <severity_label>/<file>.jpg so the label is
+        recoverable from the path -- which is how the bronze table derives it.

@@ -2,8 +2,13 @@
 
 **Date**: 2026-09-09 | **Feature**: [spec.md](./spec.md) | **Research**: [research.md](./research.md)
 
-Catalog: `smart_claims_dev`. Five schemas. Every table below is fully qualified as
-`smart_claims_dev.<schema>.<table>`.
+Catalog: `smart_claims_dev`. Five schemas.
+
+**Schema names below are logical, not literal.** `mode: development` prefixes deployed schemas
+with `dev_<username>_`, so `bronze.telematics` is `smart_claims_dev.dev_keqingli1129_bronze.telematics`
+at the `dev` target and `smart_claims_dev.bronze.telematics` at `prod` (research R13). No code or
+SQL in this project may hardcode a schema name; the resolved value comes from configuration. To
+find the current value, run `databricks bundle validate -t dev --profile DEFAULT -o json`.
 
 ## Layer map
 
