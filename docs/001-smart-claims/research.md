@@ -390,9 +390,13 @@ risk but still ignores the one-dataset-per-file rule, for no benefit).
 
 | Resource | `-t dev` | `-t prod` |
 |---|---|---|
-| catalog | `smart_claims_dev` | `smart_claims_dev` |
+| catalog | `smart_claims_dev` | `smart_claims_prod` |
 | schemas | `dev_keqingli1129_bronze` | `bronze` |
 | volumes | `claims` | `claims` |
+
+(The catalog values were later separated per target — originally both were `smart_claims_dev`,
+which had the prod target writing into a catalog named `_dev`. Isolation now exists at both
+levels: a distinct catalog per target, and within `dev`, the per-user schema prefix below.)
 
 Only schemas are affected; catalogs and volumes are not. This is deliberate — it stops several
 developers deploying the same bundle from colliding on one set of schemas — but it means no

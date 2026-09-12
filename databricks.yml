@@ -64,6 +64,7 @@ targets:
     workspace:
       host: https://dbc-b5c9918e-c2d2.cloud.databricks.com
     variables:
+      # Each target owns its own catalog; bootstrap.sh creates whichever one the target names.
       catalog: smart_claims_dev
       schema: dev
   prod:
@@ -73,7 +74,11 @@ targets:
       # We explicitly deploy to /Workspace/Users/keqingli1129@gmail.com to make sure we only have a single copy.
       root_path: /Workspace/Users/keqingli1129@gmail.com/.bundle/${bundle.name}/${bundle.target}
     variables:
-      catalog: smart_claims_dev
+      # A separate catalog per target. Isolation is therefore at the CATALOG level here, with
+      # mode: production leaving schema names unprefixed -- smart_claims_prod.bronze.claim.
+      # The dev target isolates one level down instead, via development mode's dev_<user>_
+      # schema prefix (research R13).
+      catalog: smart_claims_prod
       schema: prod
     permissions:
       - user_name: keqingli1129@gmail.com

@@ -2,7 +2,8 @@
 
 **Date**: 2026-09-09 | **Feature**: [spec.md](./spec.md) | **Research**: [research.md](./research.md)
 
-Catalog: `smart_claims_dev`. Five schemas.
+Catalog: **one per target** — `smart_claims_dev` at `dev`, `smart_claims_prod` at `prod`. Five
+schemas in each.
 
 **Schema names below are logical, not literal.** `mode: development` prefixes deployed schemas
 with `dev_<username>_`, so `bronze.telematics` is `smart_claims_dev.dev_keqingli1129_bronze.telematics`
