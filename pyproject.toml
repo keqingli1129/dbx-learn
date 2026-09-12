@@ -2,7 +2,11 @@
 name = "smart_claims"
 version = "0.0.1"
 authors = [{ name = "keqingli1129@gmail.com" }]
-requires-python = ">=3.12,<3.13"
+# Serverless runs Python 3.11.10 (research R1), but `bundle init` set this to match the local
+# interpreter (3.12). pip enforces requires-python when the job installs this project with
+# `--editable ${workspace.file_path}`, so >=3.12 would fail the install on serverless -- after a
+# successful deploy, and before any of our code runs. Widened to cover both.
+requires-python = ">=3.11,<3.13"
 dependencies = [
     # Runtime dependencies of the FastAPI claims portal and the setup/ml job code.
     #
