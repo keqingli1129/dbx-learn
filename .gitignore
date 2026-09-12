@@ -1,3 +1,4 @@
+# ---- from the bundle template ----
 .databricks/
 build/
 dist/
@@ -7,4 +8,46 @@ __pycache__/
 scratch/**
 !scratch/README.md
 **/explorations/**
-**/!explorations/README.md
+# NOTE: the template shipped `**/!explorations/README.md`, which does nothing -- the `!` sits
+# inside a directory name instead of starting the pattern, so it is a literal path, not a
+# negation. Compare `!scratch/README.md` two lines above. Corrected form:
+!**/explorations/README.md
+
+# ---- added for this project ----
+
+# Tool caches. pytest and the CLI each drop a self-ignoring .gitignore into their own cache
+# directory, so these are technically redundant -- until someone deletes one and the cache
+# suddenly shows up as untracked noise. Declared explicitly so it does not depend on that.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Compiled Python beyond __pycache__/ (stray .pyc/.pyo left by older tooling)
+*.py[cod]
+*$py.class
+
+# Coverage output, if we add it
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Notebook checkpoints -- explorations/ holds notebooks
+.ipynb_checkpoints/
+
+# Secrets. Nothing in this project should need them (all data is synthetic, Constitution V),
+# but an accidental .env must never be committable.
+.env
+.env.*
+!.env.example
+
+# Frontend build output, for the claims portal's static assets (T101)
+node_modules/
+
+# Editor and OS noise. NOTE: .vscode/ is deliberately NOT ignored -- the scaffold's
+# __builtins__.pyi is what makes Pylance resolve `spark` and `dbutils`, so it is tracked.
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store

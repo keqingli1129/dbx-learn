@@ -7,6 +7,25 @@ bundle:
 include:
   - resources/*.yml
 
+# Only ship what serverless compute actually needs. Without this, `bundle deploy` uploads every
+# file git does not ignore -- specs, tests, editor config, agent config -- and re-syncs them on
+# every deploy. Of 76 tracked files, 15 are under src/.
+#
+# What MUST stay synced:
+#   src/           pipeline dataset files and job code
+#   pyproject.toml required by `--editable ${workspace.file_path}`; without it pip cannot
+#                  install the project and `import smart_claims.lib` fails at runtime
+sync:
+  exclude:
+    - docs/**          # specs, plan, research -- read by humans, not by compute
+    - tests/**         # the offline suite runs locally; integration tests use databricks-connect
+    - fixtures/**      # test fixtures, loaded by the local suite only
+    - .specify/**      # spec-kit tooling
+    - .claude/**       # agent configuration
+    - .vscode/**       # editor settings (tracked in git on purpose, but useless in the workspace)
+    - run-tests.sh     # local test wrapper
+    - bootstrap.sh     # run locally, before the first deploy
+
 # No `artifacts:` block. The template builds a wheel with `uv build --wheel`,
 # which is the only step in the bundle that requires uv. Pipelines instead
 # install this project with `--editable ${workspace.file_path}` (research R11),
