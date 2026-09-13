@@ -21,7 +21,12 @@ def seeded():
 class TestManifestIsHonest:
     def test_reports_every_defect_kind(self, seeded):
         _, m = seeded
-        assert set(m) == set(DEFECT_RATES) | {"claims_silver_should_drop"}
+        assert set(m) == set(DEFECT_RATES) | {
+            "claims_silver_should_drop",   # exact figure T064 asserts against
+            "orphan_claims",               # planted referential gaps
+            "orphan_claim_nos",
+            "chassis_without_telematics",  # vehicles the producer must skip (T027)
+        }
 
     def test_counts_match_what_is_actually_in_the_data(self, seeded):
         data, m = seeded
@@ -85,3 +90,62 @@ class TestDeterminismAndOptOut:
         data = generate(N_CUSTOMERS, N_POLICIES, N_CLAIMS, seed=1234, inject=False)
         m = inject_defects(data, rates={**DEFECT_RATES, "null_claim_no": 0.5}, seed=1)
         assert m["null_claim_no"] == int(N_CLAIMS * 0.5)
+
+
+class TestReferentialIntegrity:
+    """Every reference resolves -- except the orphans, which are planted on purpose."""
+
+    def test_every_policy_belongs_to_a_real_customer(self, seeded):
+        data, _ = seeded
+        ids = {r["customer_id"] for r in data["customer"]}
+        assert all(r["customer_id"] in ids for r in data["policy"])
+
+    def test_only_the_planted_orphans_dangle(self, seeded):
+        data, m = seeded
+        nos = {r["policy_no"] for r in data["policy"]}
+        dangling = [r["claim_no"] for r in data["claim"] if r["policy_no"] not in nos]
+        assert len(dangling) == m["orphan_claims"]
+        assert sorted(dangling) == m["orphan_claim_nos"]
+
+    def test_orphans_survive_the_silver_expectations(self, seeded):
+        """Otherwise the edge case never reaches triage and nothing downstream sees it.
+
+        An orphan planted on a claim that silver drops for a null claim number would be a test
+        of nothing: the row is gone before any rule evaluates it.
+        """
+        data, m = seeded
+        nos = {r["policy_no"] for r in data["policy"]}
+        for r in (c for c in data["claim"] if c["policy_no"] not in nos):
+            assert r["claim_no"] is not None
+            assert 0 <= r["incident_hour"] <= 23
+            assert r["total_claim_amount"] > 0
+
+    def test_some_chassis_are_reserved_to_have_no_telematics(self, seeded):
+        data, m = seeded
+        silent = set(m["chassis_without_telematics"])
+        assert silent, "the indeterminate speed-check case needs at least one silent vehicle"
+        known = {r["chassis_no"] for r in data["policy"]}
+        assert silent <= known, "a reserved chassis must belong to a real policy"
+
+
+class TestDistributionIsSkewed:
+    """Uniform cardinality would exercise joins and aggregations only at 1-2 rows per group."""
+
+    def test_some_policies_have_no_claims_and_some_have_many(self, seeded):
+        from collections import Counter
+        data, _ = seeded
+        per_policy = Counter(r["policy_no"] for r in data["claim"])
+        with_none = len(data["policy"]) - len(per_policy)
+        assert with_none > 0, "no zero-claim policy: left joins never see a non-match"
+        assert max(per_policy.values()) >= 3, "no policy with several claims: grouping is trivial"
+
+    def test_some_customers_hold_no_policies(self, seeded):
+        data, _ = seeded
+        owners = {r["customer_id"] for r in data["policy"]}
+        assert len(owners) < len(data["customer"])
+
+    def test_totals_are_unchanged_by_the_skew(self, seeded):
+        data, _ = seeded
+        assert len(data["customer"]) == N_CUSTOMERS
+        assert len(data["policy"]) == N_POLICIES
+        assert len(data["claim"]) == N_CLAIMS

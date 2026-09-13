@@ -79,6 +79,25 @@ INCIDENT_TYPES: Final[tuple[str, ...]] = (
 COLLISION_TYPES: Final[tuple[str, ...]] = ("Front Collision", "Rear Collision", "Side Collision")
 
 
+# How many policies a customer holds, and how many claims a policy attracts. Deliberately
+# uneven. Round-robin assignment (`i % len(customers)`) guarantees referential integrity but
+# produces a lattice where every policy has exactly one or two claims -- so joins and
+# aggregations are only ever exercised at cardinality 1-2, and a bug that appears at zero
+# matches or at five would pass here and surface in the gold layer instead.
+POLICIES_PER_CUSTOMER: Final[dict[int, int]] = {0: 12, 1: 60, 2: 22, 3: 5, 5: 1}
+CLAIMS_PER_POLICY: Final[dict[int, int]] = {0: 55, 1: 28, 2: 11, 3: 4, 6: 2}
+
+#: Claims pointing at a policy that does not exist. Not corruption -- the spec's
+#: "claim references a missing policy" edge case. Coverage and policy-date checks cannot be
+#: evaluated for these, so they must come out INDETERMINATE and route to a human: never
+#: silently approved (no evidence they are valid) and never failed (none that they are not).
+ORPHAN_CLAIMS: Final[int] = 8
+
+#: Policies whose vehicle emits no telematics at all, so the speed check is likewise
+#: indeterminate. The producer (T027) must skip these chassis numbers.
+POLICIES_WITHOUT_TELEMATICS: Final[int] = 5
+
+
 # Fractions of rows to damage. These are NOT noise -- each one exists so a specific downstream
 # check can be proven to fire. A run with zero dropped rows in silver would otherwise be
 # ambiguous: working expectations on clean data look identical to expectations that never ran.
@@ -149,6 +168,75 @@ def inject_defects(
     return manifest
 
 
+def plant_orphans_and_gaps(
+    data: dict[str, list[dict[str, Any]]],
+    orphans: int = ORPHAN_CLAIMS,
+    no_telematics: int = POLICIES_WITHOUT_TELEMATICS,
+    seed: int = 21,
+) -> dict[str, Any]:
+    """Break referential integrity on purpose, in exactly two places.
+
+    Both produce INDETERMINATE checks rather than failures, which is the distinction
+    `lib.decision` exists to preserve:
+
+    * an orphan claim has no policy, so coverage and policy-date cannot be evaluated;
+    * a vehicle with no telematics has no `max_speed`, so the speed rule evaluates to NULL.
+
+    Orphans are drawn only from claims that survive the silver expectations -- a claim that is
+    dropped for a null claim number never reaches triage, so using one here would plant an edge
+    case that no downstream check ever sees.
+    """
+    rng = random.Random(seed)
+    claims, policies = data["claim"], data["policy"]
+
+    survivors = [
+        i for i, r in enumerate(claims)
+        if r["claim_no"] is not None
+        and 0 <= r["incident_hour"] <= 23
+        and r["total_claim_amount"] > 0
+    ]
+    orphan_idx = rng.sample(survivors, min(orphans, len(survivors)))
+    for n, i in enumerate(orphan_idx):
+        claims[i]["policy_no"] = f"POL-MISSING-{n:03d}"
+
+    gap_idx = rng.sample(range(len(policies)), min(no_telematics, len(policies)))
+    silent = sorted(policies[i]["chassis_no"] for i in gap_idx)
+
+    return {
+        "orphan_claims": len(orphan_idx),
+        "orphan_claim_nos": sorted(claims[i]["claim_no"] for i in orphan_idx),
+        "chassis_without_telematics": silent,
+    }
+
+
+def _allocate(total: int, buckets: int, weights: dict[int, int], rng: random.Random) -> list[int]:
+    """Split `total` across `buckets`, shaped by `weights` (count -> relative frequency).
+
+    Returns exactly `total` in sum. The shape is approximate; the total is not.
+    """
+    sizes = list(weights)
+    counts = rng.choices(sizes, weights=[weights[s] for s in sizes], k=buckets)
+    shortfall = total - sum(counts)
+    while shortfall:
+        i = rng.randrange(buckets)
+        if shortfall > 0:
+            counts[i] += 1
+            shortfall -= 1
+        elif counts[i]:
+            counts[i] -= 1
+            shortfall += 1
+    return counts
+
+
+def _assign(parents: list[dict], key: str, child_count: int,
+            weights: dict[int, int], rng: random.Random) -> list[str]:
+    """One parent key per child, shaped by `weights`. Every key resolves to a real parent."""
+    counts = _allocate(child_count, len(parents), weights, rng)
+    keys = [parents[i][key] for i, n in enumerate(counts) for _ in range(n)]
+    rng.shuffle(keys)
+    return keys
+
+
 def _fmt(value: dt.date | dt.datetime, key: str) -> str:
     """Render a date using the SAME pattern table the cleaning functions parse with.
 
@@ -197,14 +285,14 @@ def make_customers(count: int, rng: random.Random) -> list[dict[str, Any]]:
 
 def make_policies(customers: list[dict], count: int, rng: random.Random) -> list[dict[str, Any]]:
     """Policies, each owned by an existing customer. `chassis_no` is what telematics joins on."""
+    owner_ids = _assign(customers, "customer_id", count, POLICIES_PER_CUSTOMER, rng)
     rows = []
     for i in range(count):
-        owner = customers[i % len(customers)]
         make, models = rng.choice(MAKES)
         eff = dt.date(rng.randrange(2023, 2026), rng.randrange(1, 13), rng.randrange(1, 29))
         rows.append({
             "policy_no": f"POL-{i:06d}",
-            "customer_id": owner["customer_id"],
+            "customer_id": owner_ids[i],
             "chassis_no": f"WVWZZZ{i:011d}",
             "sum_insured": float(rng.choice((25_000, 50_000, 75_000, 100_000))),
             "premium": float(rng.randrange(400, 2_400)),
@@ -219,9 +307,9 @@ def make_policies(customers: list[dict], count: int, rng: random.Random) -> list
 
 def make_claims(policies: list[dict], count: int, rng: random.Random) -> list[dict[str, Any]]:
     """Claims against existing policies, with the customer's self-assessed severity."""
+    policy_nos = _assign(policies, "policy_no", count, CLAIMS_PER_POLICY, rng)
     rows = []
     for i in range(count):
-        policy = policies[i % len(policies)]
         incident = dt.date(2026, rng.randrange(1, 10), rng.randrange(1, 29))
         claim_ts = dt.datetime.combine(
             incident + dt.timedelta(days=rng.randrange(0, 5)),
@@ -230,7 +318,7 @@ def make_claims(policies: list[dict], count: int, rng: random.Random) -> list[di
         city, state = rng.choice(CITIES)
         rows.append({
             "claim_no": f"CLM-{i:06d}",
-            "policy_no": policy["policy_no"],
+            "policy_no": policy_nos[i],
             "claim_date": _fmt(claim_ts, "ISO_DATETIME"),
             "incident_date": _fmt(incident, "US_SLASH"),
             "incident_hour": rng.randrange(0, 24),
@@ -263,6 +351,9 @@ def generate(customers: int, policies: int, claims: int, seed: int,
     data = {"customer": customer_rows, "policy": policy_rows, "claim": claim_rows}
     if inject:
         manifest = inject_defects(data, seed=seed)
+        # AFTER defect injection: orphans are chosen from claims that survive silver, so the
+        # edge case actually reaches triage rather than being dropped before it.
+        manifest.update(plant_orphans_and_gaps(data, seed=seed))
         data["_manifest"] = [manifest]        # carried out-of-band, not written to any table
     return data
 
