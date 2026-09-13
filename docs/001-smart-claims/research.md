@@ -484,3 +484,51 @@ invites and what `bootstrap.sh` avoids.
   stdin, so the piped JSON is discarded and `json.load` sees an empty stream. **A command cannot
   take stdin from both a pipe and a heredoc.** The verify step now uses the CLI's own exit status
   and no Python at all.
+
+## R15. The `--editable` install does not work — use a wheel
+
+**Supersedes the editable-install half of R11.** Found by submitting a one-off run of the
+deployed seed script before writing its job resource.
+
+**Symptom**: `ModuleNotFoundError: No module named 'smart_claims'`, from a script whose
+environment declared `dependencies: ["--editable ${workspace.file_path}"]` — the pattern the
+`default-python` template ships and that R11 adopted.
+
+**Diagnosis**, by running an identical probe from two locations:
+
+| Probe location | `cwd` at runtime | `pip list` | `import smart_claims` |
+|---|---|---|---|
+| `src/_env_probe.py` | `.../files/src` | installed (editable) | **OK** |
+| `src/smart_claims/setup/_env_probe2.py` | `.../files/src/smart_claims/setup` | installed (editable) | **ModuleNotFoundError** |
+
+pip reports the package installed in **both** cases, so the install appears to succeed. It does
+not work. The probe's `sys.path` shows why — the `.pth` written by the editable install contains
+
+```
+/Workspace/Workspace/Users/.../files/src        <-- doubled "/Workspace"
+```
+
+a path that does not exist. The first probe imported only because `spark_python_task` sets `cwd`
+to the script's own directory, and for a script at `src/` root that directory *is* the package
+root. Any script nested deeper — which is every real entry point in this project — fails.
+
+**Decision**: build a wheel. `artifacts` is restored in `databricks.yml` with
+`build: python -m build --wheel` (hatchling, no uv; verified locally, 17 KB). Jobs and pipelines
+declare the wheel as a dependency instead of an editable path.
+
+**Verified**: the same nested script that failed under `--editable` runs under the wheel — its
+module-level `from smart_claims.lib.cleaning import ...` resolves and argparse prints usage.
+
+**Two operational details learned while testing**:
+
+1. The wheel is uploaded to `${workspace.artifact_path}/.internal/`, **not** to `files/dist/`.
+   A bundle-declared resource writes `- ../dist/*.whl` and the CLI rewrites that path at deploy
+   time; an ad-hoc `jobs submit` gets no such rewriting and must name the real uploaded path.
+   This is a good reason to prefer declared resources over ad-hoc submits.
+2. `environment_version: "5"` provides **Python 3.12.3**, not the 3.11.10 seen in the R1 probe —
+   that was the default serverless notebook environment. The widened
+   `requires-python = ">=3.11,<3.13"` covers both, so nothing needs changing, but the earlier
+   figure should not be taken as "the" serverless Python version.
+
+**Consequence**: T025, T030, T063 and T077 must declare the wheel, not `--editable`. R11's other
+findings (why not `bundle init`, the dependency-caching caveat) still stand.

@@ -26,10 +26,19 @@ sync:
     - run-tests.sh     # local test wrapper
     - bootstrap.sh     # run locally, before the first deploy
 
-# No `artifacts:` block. The template builds a wheel with `uv build --wheel`,
-# which is the only step in the bundle that requires uv. Pipelines instead
-# install this project with `--editable ${workspace.file_path}` (research R11),
-# so no wheel is needed and the bundle deploys with the CLI alone.
+# Build a wheel so jobs and pipelines can install this project as a normal dependency.
+#
+# The template used `uv build --wheel`; this uses `python -m build`, which produces the same
+# artifact via hatchling without requiring uv.
+#
+# The `--editable ${workspace.file_path}` alternative the template also offers does NOT work
+# here (research R15): pip reports the package as installed, but the .pth it writes contains a
+# doubled `/Workspace/Workspace/...` prefix, so `import smart_claims` fails for any script that
+# is not run from src/ itself. A wheel has no such dependency on paths or cwd.
+artifacts:
+  python_artifact:
+    type: whl
+    build: python -m build --wheel
 
 # Variable declarations. These variables are assigned in the dev/prod targets below.
 variables:

@@ -2,28 +2,32 @@
 name = "smart_claims"
 version = "0.0.1"
 authors = [{ name = "keqingli1129@gmail.com" }]
-# Serverless runs Python 3.11.10 (research R1), but `bundle init` set this to match the local
-# interpreter (3.12). pip enforces requires-python when the job installs this project with
-# `--editable ${workspace.file_path}`, so >=3.12 would fail the install on serverless -- after a
-# successful deploy, and before any of our code runs. Widened to cover both.
+# `bundle init` set this to match the local interpreter (3.12). Serverless environment_version 5
+# is Python 3.12.3, but the default notebook environment is 3.11.10 (research R1, R15). pip
+# enforces requires-python when the wheel is installed, so a >=3.12 pin would fail on the latter
+# -- after a successful deploy, before any of our code runs. Widened to cover both.
 requires-python = ">=3.11,<3.13"
-dependencies = [
-    # Runtime dependencies of the FastAPI claims portal and the setup/ml job code.
-    #
-    # NOT pipeline dependencies. The scaffold's warning applies: for pipelines, dependencies
-    # declared here are cached during development -- declare them in the `environment` section
-    # of each pipeline.yml instead (research R11). torch/torchvision/mlflow therefore do NOT
-    # belong here; they go on the ML job's environment (T076).
+# DELIBERATELY EMPTY. Anything listed here is declared as `Requires-Dist` in the wheel, so every
+# consumer installs it -- including the seeding job and the pipelines, which need none of the
+# app's web stack. Keeping this empty means the wheel installs with zero PyPI round-trips, and
+# each workload asks only for what it actually uses via the extras below.
+#
+# Pipeline dependencies never belong here either: the scaffold warns they are cached during
+# development, so they go in each pipeline's `environment` block instead (research R11).
+dependencies = []
+
+[project.optional-dependencies]
+# The FastAPI claims portal (T096-T101). Installed as `smart_claims[app]`.
+app = [
     "fastapi",
     "uvicorn",
     "python-multipart",   # multipart/form-data image upload
     "databricks-sdk",
 ]
 
-# Declared as an EXTRA, not a PEP 735 [dependency-groups] block. The scaffold used the latter,
+# Declared as EXTRAS, not a PEP 735 [dependency-groups] block. The scaffold used the latter,
 # which `uv sync --dev` understands but `pip install --group` only supports from pip 25.1; the
-# system pip here is 24.0. An extra works on every pip, so `pip install -e '.[dev]'` is portable.
-[project.optional-dependencies]
+# system pip here is 24.0. Extras work on every pip, so `pip install -e '.[dev]'` is portable.
 dev = [
     "pytest",
     "pytest-mock",
@@ -32,6 +36,7 @@ dev = [
     # the scaffold's default of 16.4 which targets Spark 3.5. Used only by tests/integration/,
     # which are marked `workspace`; tests/unit/ must import nothing from here (Constitution I).
     "databricks-connect~=18.0.0",
+    "build",   # `python -m build --wheel`, used by the bundle's artifacts block
 ]
 
 # No [project.scripts]. The scaffold declared `main = "smart_claims.main:main"`, but T002 deleted
