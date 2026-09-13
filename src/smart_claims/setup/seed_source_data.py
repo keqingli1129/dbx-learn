@@ -79,6 +79,76 @@ INCIDENT_TYPES: Final[tuple[str, ...]] = (
 COLLISION_TYPES: Final[tuple[str, ...]] = ("Front Collision", "Rear Collision", "Side Collision")
 
 
+# Fractions of rows to damage. These are NOT noise -- each one exists so a specific downstream
+# check can be proven to fire. A run with zero dropped rows in silver would otherwise be
+# ambiguous: working expectations on clean data look identical to expectations that never ran.
+#
+#   null_claim_no       -> silver.claim  `claim_no IS NOT NULL`
+#   bad_incident_hour   -> silver.claim  `incident_hour BETWEEN 0 AND 23`
+#   nonpositive_amount  -> silver.claim  `total_claim_amount > 0`
+#   negative_premium    -> silver.policy `abs(premium)` cleaning (FR-019), NOT a drop
+DEFECT_RATES: Final[dict[str, float]] = {
+    "null_claim_no": 0.02,
+    "bad_incident_hour": 0.015,
+    "nonpositive_amount": 0.01,
+    "negative_premium": 0.05,
+}
+
+
+def inject_defects(
+    data: dict[str, list[dict[str, Any]]],
+    rates: dict[str, float] | None = None,
+    seed: int = 7,
+) -> dict[str, int]:
+    """Damage a fraction of the generated rows in place; return a manifest of what was planted.
+
+    The three claim defects are applied to DISJOINT index sets, so the number of claims silver
+    should drop is the plain sum of the three counts rather than the size of an overlap. That
+    turns SC-006 from "some rows were dropped" into an exact equality a later task can assert.
+
+    `negative_premium` is different in kind: policies are not dropped for it. It exercises the
+    `abs(premium)` cleaning step, so it is reported separately in the manifest.
+    """
+    rates = rates or DEFECT_RATES
+    rng = random.Random(seed)
+    claims, policies = data["claim"], data["policy"]
+
+    claim_defects = ("null_claim_no", "bad_incident_hour", "nonpositive_amount")
+    wanted = {k: int(len(claims) * rates[k]) for k in claim_defects}
+
+    # Disjoint index sets: shuffle once, then slice.
+    pool = list(range(len(claims)))
+    rng.shuffle(pool)
+    cursor = 0
+    chosen: dict[str, list[int]] = {}
+    for kind in claim_defects:
+        chosen[kind] = pool[cursor:cursor + wanted[kind]]
+        cursor += wanted[kind]
+
+    for i in chosen["null_claim_no"]:
+        claims[i]["claim_no"] = None
+    # CYCLED, not randomly chosen. With a small row count `rng.choice` can easily plant only
+    # negatives and no zero, or only above-range hours and nothing below zero -- leaving a
+    # one-sided downstream check able to pass by accident. Cycling guarantees every variant
+    # appears as soon as there are at least as many rows as variants.
+    bad_hours = (-1, 24, 25, 99)
+    for n, i in enumerate(chosen["bad_incident_hour"]):
+        claims[i]["incident_hour"] = bad_hours[n % len(bad_hours)]
+    bad_amounts = (0.0, -1.0, -4500.0)
+    for n, i in enumerate(chosen["nonpositive_amount"]):
+        claims[i]["total_claim_amount"] = bad_amounts[n % len(bad_amounts)]
+
+    n_premium = int(len(policies) * rates["negative_premium"])
+    premium_idx = rng.sample(range(len(policies)), n_premium)
+    for i in premium_idx:
+        policies[i]["premium"] = -abs(policies[i]["premium"])
+
+    manifest = {k: len(v) for k, v in chosen.items()}
+    manifest["negative_premium"] = n_premium
+    manifest["claims_silver_should_drop"] = sum(manifest[k] for k in claim_defects)
+    return manifest
+
+
 def _fmt(value: dt.date | dt.datetime, key: str) -> str:
     """Render a date using the SAME pattern table the cleaning functions parse with.
 
@@ -180,13 +250,21 @@ def make_claims(policies: list[dict], count: int, rng: random.Random) -> list[di
     return rows
 
 
-def generate(customers: int, policies: int, claims: int, seed: int) -> dict[str, list[dict]]:
-    """Generate all three tables. Deterministic for a given seed, so runs are reproducible."""
+def generate(customers: int, policies: int, claims: int, seed: int,
+             inject: bool = True) -> dict[str, list[dict]]:
+    """Generate all three tables, with deliberate defects. Deterministic for a given seed.
+
+    `inject=False` yields undamaged rows, which is only useful for comparing against.
+    """
     rng = random.Random(seed)
     customer_rows = make_customers(customers, rng)
     policy_rows = make_policies(customer_rows, policies, rng)
     claim_rows = make_claims(policy_rows, claims, rng)
-    return {"customer": customer_rows, "policy": policy_rows, "claim": claim_rows}
+    data = {"customer": customer_rows, "policy": policy_rows, "claim": claim_rows}
+    if inject:
+        manifest = inject_defects(data, seed=seed)
+        data["_manifest"] = [manifest]        # carried out-of-band, not written to any table
+    return data
 
 
 def main() -> None:
@@ -206,6 +284,7 @@ def main() -> None:
 
     spark = SparkSession.builder.getOrCreate()
     data = generate(args.customers, args.policies, args.claims, args.seed)
+    manifest = data.pop("_manifest")[0]
     ddl = {"customer": CUSTOMER_DDL, "policy": POLICY_DDL, "claim": CLAIM_DDL}
 
     for table, rows in data.items():
@@ -223,6 +302,12 @@ def main() -> None:
             AS SELECT * FROM _seed_{table}
         """)
         print(f"wrote {len(rows):>5} rows to {fq}")
+
+    # Printed so a later run can be checked against it: silver should drop exactly
+    # `claims_silver_should_drop` claims, no more and no fewer.
+    print("\nplanted defects:")
+    for k, v in manifest.items():
+        print(f"  {k:28} {v}")
 
 
 if __name__ == "__main__":
